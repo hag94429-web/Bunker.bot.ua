@@ -607,7 +607,7 @@ async def admin_cb(call: CallbackQuery):
     if action == "stop":
         game.__dict__.update(Game().__dict__)
         await call.answer("Зупинено", show_alert=False)
-        await call.message.answer("🛑 Гру зупинено. /new щоб почати.")
+        await call.message.answer("🛑 Гру зупинено.")
         return
     if action == "next":
 

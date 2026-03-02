@@ -13,9 +13,6 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
-
-# ===================== CONFIG =====================
-
 MAX_ROUNDS = 7
 MIN_PLAYERS = 6
 MAX_PLAYERS = 15
@@ -58,10 +55,8 @@ BAG = ["Аптечка", "Фільтр води", "Ніж", "Запальнич�
 EXTRA = ["Знає 3 мови", "Має карту місцевості", "Колишній волонтер", "Вміє шити", "Знає першу допомогу", "Колишній спортсмен"]
 SPEC = ["Може вилікувати 1 раз", "Може перекинути 1 голос", "Може врятувати 1 гравця від вильоту", "Може змінити катаклізм (1 раз)"]
 
-
 def bunker_slots(n_players: int) -> int:
     return n_players // 2
-
 
 def reveals_per_round(n_players: int) -> List[int]:
     if n_players == 6:
@@ -82,7 +77,6 @@ def reveals_per_round(n_players: int) -> List[int]:
     base = [3, 2, 1] + [1] * (MAX_ROUNDS - 3)
     return base[:MAX_ROUNDS]
 
-
 def build_bunker_desc() -> str:
     size = random.choice(["220 м²", "350 м²", "480 м²", "600 м²"])
     time_need = random.choice(["6 місяців", "1 рік", "2 роки", "3 роки"])
@@ -96,12 +90,8 @@ def build_bunker_desc() -> str:
         f"• В бункері є: {items}\n"
     )
 
-
 def percent(part: int, whole: int) -> float:
     return 0.0 if whole <= 0 else (part / whole) * 100.0
-
-
-# ===================== DB =====================
 
 DB_PATH = "bunker.db"
 
@@ -146,9 +136,6 @@ async def db_init():
         )""")
         await db.commit()
 
-
-# ===================== GAME =====================
-
 class Phase(str, Enum):
     LOBBY = "lobby"
     PRESENTATION = "presentation"
@@ -157,7 +144,6 @@ class Phase(str, Enum):
     VOTE = "vote"
     JUSTIFY = "justify"
     FINISH = "finish"
-
 
 CARD_KEYS_ORDER = [
     ("Професія", "profession"),
@@ -173,7 +159,6 @@ CARD_KEYS_ORDER = [
     ("Додаткове", "extra"),
     ("Спецздібність", "spec"),
 ]
-
 
 def random_card() -> Dict[str, str]:
     return {
@@ -191,7 +176,6 @@ def random_card() -> Dict[str, str]:
         "spec": random.choice(SPEC),
     }
 
-
 @dataclass
 class Player:
     user_id: int
@@ -202,7 +186,6 @@ class Player:
 
     def tag(self) -> str:
         return f"@{self.username}" if self.username else self.name
-
 
 @dataclass
 class Game:
@@ -224,19 +207,16 @@ class Game:
     pending_elims_this_round: int = 1
     skipped_vote_in_round1: bool = False
 
-    # voting
     vote_open: bool = False
     vote_until_ts: float = 0.0
     votes: Dict[int, int] = field(default_factory=dict)  # voter -> target
     silent_offenders: Set[int] = field(default_factory=set)
 
-    # justify
     justified_this_round: Set[int] = field(default_factory=set)
     justify_candidates: List[int] = field(default_factory=list)
 
     players: Dict[int, Player] = field(default_factory=dict)
 
-    # timers (tasks)
     timer_task: Optional[asyncio.Task] = None
     stage_task: Optional[asyncio.Task] = None
 
@@ -264,19 +244,13 @@ class Game:
     def need_finish(self) -> bool:
         return len(self.alive_ids()) <= self.slots
 
-
 GAMES: Dict[int, Game] = {}
-
 
 def get_game(chat_id: int) -> Game:
     if chat_id not in GAMES:
         GAMES[chat_id] = Game()
     return GAMES[chat_id]
 
-
-# ===================== UI =====================
-
-# ✅ ВАЖЛИВО: "Старт" показуємо завжди, але натиснути зможе тільки хост/owner
 def kb_lobby() -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
     kb.button(text="➕ Приєднатись", callback_data="lobby:join")
@@ -285,7 +259,6 @@ def kb_lobby() -> InlineKeyboardBuilder:
     kb.button(text="▶️ Старт", callback_data="lobby:start")
     kb.adjust(2, 2)
     return kb
-
 
 def kb_admin() -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
@@ -296,7 +269,6 @@ def kb_admin() -> InlineKeyboardBuilder:
     kb.adjust(2, 2)
     return kb
 
-
 def kb_vote(game: Game) -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
     alive = game.alive_players()
@@ -305,14 +277,10 @@ def kb_vote(game: Game) -> InlineKeyboardBuilder:
     kb.adjust(1)
     return kb
 
-
 def kb_dm_reveal(chat_id: int) -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
     kb.button(text="🃏 Відкрити характеристику", callback_data=f"dm:reveal:{chat_id}")
     return kb
-
-
-# ===================== BOT =====================
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")

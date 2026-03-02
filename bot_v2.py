@@ -13,6 +13,9 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
+
+# ===================== CONFIG =====================
+
 MAX_ROUNDS = 7
 MIN_PLAYERS = 6
 MAX_PLAYERS = 15
@@ -47,7 +50,6 @@ PROF = [
     "Лікар", "Хірург", "Медсестра", "Інженер", "Електрик", "Механік", "Повар", "Фермер",
     "Військовий", "Рятувальник", "Психолог", "Вчитель", "Біолог", "Хімік", "Програміст", "Будівельник",
 ]
-
 HEALTH = ["Здоровий", "Астма", "Діабет", "Слабкий зір", "Гіпертонія", "Після травми", "Імунодефіцит (легкий)"]
 HOBBY = ["Риболовля", "Виживання", "Кулінарія", "Спорт", "Шахи", "Медицина", "Ремонт техніки", "Садівництво"]
 PHOBIA = ["Клаустрофобія", "Арахнофобія", "Страх висоти", "Страх темряви", "Соціофобія", "Без фобій"]
@@ -98,7 +100,11 @@ def build_bunker_desc() -> str:
 def percent(part: int, whole: int) -> float:
     return 0.0 if whole <= 0 else (part / whole) * 100.0
 
+
+# ===================== DB =====================
+
 DB_PATH = "bunker.db"
+
 
 async def db_init():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -140,6 +146,9 @@ async def db_init():
         )""")
         await db.commit()
 
+
+# ===================== GAME =====================
+
 class Phase(str, Enum):
     LOBBY = "lobby"
     PRESENTATION = "presentation"
@@ -148,6 +157,7 @@ class Phase(str, Enum):
     VOTE = "vote"
     JUSTIFY = "justify"
     FINISH = "finish"
+
 
 CARD_KEYS_ORDER = [
     ("Професія", "profession"),
@@ -163,6 +173,7 @@ CARD_KEYS_ORDER = [
     ("Додаткове", "extra"),
     ("Спецздібність", "spec"),
 ]
+
 
 def random_card() -> Dict[str, str]:
     return {
@@ -180,6 +191,7 @@ def random_card() -> Dict[str, str]:
         "spec": random.choice(SPEC),
     }
 
+
 @dataclass
 class Player:
     user_id: int
@@ -190,6 +202,7 @@ class Player:
 
     def tag(self) -> str:
         return f"@{self.username}" if self.username else self.name
+
 
 @dataclass
 class Game:
@@ -211,16 +224,19 @@ class Game:
     pending_elims_this_round: int = 1
     skipped_vote_in_round1: bool = False
 
+    # voting
     vote_open: bool = False
     vote_until_ts: float = 0.0
     votes: Dict[int, int] = field(default_factory=dict)  # voter -> target
     silent_offenders: Set[int] = field(default_factory=set)
 
+    # justify
     justified_this_round: Set[int] = field(default_factory=set)
     justify_candidates: List[int] = field(default_factory=list)
 
     players: Dict[int, Player] = field(default_factory=dict)
 
+    # timers (tasks)
     timer_task: Optional[asyncio.Task] = None
     stage_task: Optional[asyncio.Task] = None
 
@@ -248,22 +264,28 @@ class Game:
     def need_finish(self) -> bool:
         return len(self.alive_ids()) <= self.slots
 
+
 GAMES: Dict[int, Game] = {}
+
 
 def get_game(chat_id: int) -> Game:
     if chat_id not in GAMES:
         GAMES[chat_id] = Game()
     return GAMES[chat_id]
 
-def kb_lobby(is_host: bool) -> InlineKeyboardBuilder:
+
+# ===================== UI =====================
+
+# ✅ ВАЖЛИВО: "Старт" показуємо завжди, але натиснути зможе тільки хост/owner
+def kb_lobby() -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
     kb.button(text="➕ Приєднатись", callback_data="lobby:join")
     kb.button(text="➖ Вийти", callback_data="lobby:leave")
     kb.button(text="👥 Гравці", callback_data="lobby:players")
-    if is_host:
-        kb.button(text="▶️ Старт", callback_data="lobby:start")
+    kb.button(text="▶️ Старт", callback_data="lobby:start")
     kb.adjust(2, 2)
     return kb
+
 
 def kb_admin() -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
@@ -274,6 +296,7 @@ def kb_admin() -> InlineKeyboardBuilder:
     kb.adjust(2, 2)
     return kb
 
+
 def kb_vote(game: Game) -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
     alive = game.alive_players()
@@ -282,10 +305,14 @@ def kb_vote(game: Game) -> InlineKeyboardBuilder:
     kb.adjust(1)
     return kb
 
+
 def kb_dm_reveal(chat_id: int) -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
     kb.button(text="🃏 Відкрити характеристику", callback_data=f"dm:reveal:{chat_id}")
     return kb
+
+
+# ===================== BOT =====================
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
@@ -298,11 +325,14 @@ OWNER_ID = int(OWNER_ID_ENV) if OWNER_ID_ENV.isdigit() else None
 bot = Bot(TOKEN)
 dp = Dispatcher()
 
+
 def is_owner(user_id: Optional[int]) -> bool:
     return OWNER_ID is not None and user_id == OWNER_ID
 
+
 def is_host(game: Game, user_id: Optional[int]) -> bool:
     return user_id is not None and game.host_id == user_id
+
 
 async def ensure_dm_open(user_id: int) -> bool:
     try:
@@ -311,8 +341,8 @@ async def ensure_dm_open(user_id: int) -> bool:
     except Exception:
         return False
 
-async def deal_cards(chat_id: int, game: Game):
 
+async def deal_cards(chat_id: int, game: Game):
     async with aiosqlite.connect(DB_PATH) as db:
         for pid, p in game.players.items():
             card = random_card()
@@ -334,6 +364,7 @@ async def deal_cards(chat_id: int, game: Game):
             await bot.send_message(pid, text, reply_markup=kb_dm_reveal(chat_id).as_markup())
         except Exception:
             pass
+
 
 async def dm_next_reveal(chat_id: int, user_id: int) -> Tuple[bool, str]:
     game = get_game(chat_id)
@@ -377,6 +408,7 @@ async def dm_next_reveal(chat_id: int, user_id: int) -> Tuple[bool, str]:
 
     return False, "Усі характеристики вже відкриті."
 
+
 async def post_round_banner(chat_id: int, game: Game):
     await bot.send_message(
         chat_id,
@@ -385,7 +417,7 @@ async def post_round_banner(chat_id: int, game: Game):
         f"{game.bunker_desc}\n"
         f"👁 Місць у бункері: {game.slots} із {len(game.players)}.\n"
         "Ті, хто не потрапить — загинуть.\n\n"
-        "Гра почалась. Ведучий керує етапами, але таймери і голосування — автоматичні.\n",
+        "Гра почалась. Таймери і голосування — автоматичні.\n",
         reply_markup=kb_admin().as_markup() if (game.owner_id is not None) else None
     )
 
@@ -420,11 +452,16 @@ async def cmd_new(message: Message):
     game.__dict__.update(Game().__dict__)
     game.owner_id = OWNER_ID
     game.phase = Phase.LOBBY
+
+    game.host_id = message.from_user.id if message.from_user else None
+
+    host_name = message.from_user.full_name if message.from_user else "—"
+
     await message.answer(
         "🧩 Лобі створено.\n"
         "Натискай кнопки нижче.\n"
-        f"Хост стане той, хто першим натисне «Старт» (або власник може стартувати).",
-        reply_markup=kb_lobby(is_host=False).as_markup()
+        f"👑 Хост: {host_name}\n",
+        reply_markup=kb_lobby().as_markup()
     )
 
 @dp.message(Command("status"))
@@ -494,7 +531,7 @@ async def lobby_cb(call: CallbackQuery):
             "🧩 Лобі.\n\n"
             f"Гравців: {len(game.players)}\n"
             f"{game.roster_text(False)}",
-            reply_markup=kb_lobby(is_host=False).as_markup()
+            reply_markup=kb_lobby().as_markup()
         )
         return
 
@@ -511,7 +548,7 @@ async def lobby_cb(call: CallbackQuery):
             "🧩 Лобі.\n\n"
             f"Гравців: {len(game.players)}\n"
             f"{game.roster_text(False)}",
-            reply_markup=kb_lobby(is_host=False).as_markup()
+            reply_markup=kb_lobby().as_markup()
         )
         return
 
@@ -521,12 +558,11 @@ async def lobby_cb(call: CallbackQuery):
             "🧩 Лобі.\n\n"
             f"Гравців: {len(game.players)}\n"
             f"{game.roster_text(False)}",
-            reply_markup=kb_lobby(is_host=False).as_markup()
+            reply_markup=kb_lobby().as_markup()
         )
         return
 
     if action == "start":
-
         if game.active:
             await call.answer("Гра вже йде.", show_alert=True)
             return
@@ -534,11 +570,7 @@ async def lobby_cb(call: CallbackQuery):
             await call.answer("Потрібно мінімум 6 гравців.", show_alert=True)
             return
 
-        if game.host_id is None:
-
-            game.host_id = u.id
-
-        if not (u.id == game.host_id or is_owner(u.id)):
+        if not (is_host(game, u.id) or is_owner(u.id)):
             await call.answer("Стартує тільки хост/власник.", show_alert=True)
             return
 
@@ -607,10 +639,9 @@ async def admin_cb(call: CallbackQuery):
     if action == "stop":
         game.__dict__.update(Game().__dict__)
         await call.answer("Зупинено", show_alert=False)
-        await call.message.answer("🛑 Гру зупинено.")
+        await call.message.answer("🛑 Гру зупинено. /new щоб почати.")
         return
     if action == "next":
-
         await call.answer("Next", show_alert=False)
         await force_next(chat_id, game)
         return
@@ -722,6 +753,7 @@ async def open_vote(chat_id: int, game: Game):
 
     game.stage_task = asyncio.create_task(run_vote_timer(chat_id, game))
 
+
 async def run_vote_timer(chat_id: int, game: Game):
     await asyncio.sleep(15)
     if not game.active or game.paused:
@@ -729,11 +761,13 @@ async def run_vote_timer(chat_id: int, game: Game):
     if game.vote_open:
         await close_vote(chat_id, game)
 
+
 async def apply_silence_penalty(game: Game):
     for pid in game.silent_offenders:
         p = game.players.get(pid)
         if p and p.alive:
             p.skip_speech_next_round = True
+
 
 def count_votes_with_absent_as_self(game: Game) -> Dict[int, int]:
     alive_ids = game.alive_ids()
@@ -744,6 +778,7 @@ def count_votes_with_absent_as_self(game: Game) -> Dict[int, int]:
         else:
             counts[voter_id] += 1
     return counts
+
 
 def top_candidates(counts: Dict[int, int]) -> Tuple[List[int], int]:
     if not counts:
@@ -850,7 +885,6 @@ async def eliminate(chat_id: int, game: Game, kicked_ids: List[int], reason: str
 
     await advance_round(chat_id, game)
 
-
 async def advance_round(chat_id: int, game: Game):
     if game.round_no >= MAX_ROUNDS:
         game.phase = Phase.FINISH
@@ -881,9 +915,7 @@ async def advance_round(chat_id: int, game: Game):
     )
     await start_presentation_stage(chat_id, game)
 
-
 async def force_next(chat_id: int, game: Game):
-
     if not game.active:
         await bot.send_message(chat_id, "Немає активної гри.")
         return
@@ -930,7 +962,7 @@ async def vote_cb(call: CallbackQuery):
 @dp.message(F.text)
 async def any_text(message: Message):
     game = get_game(message.chat.id)
-    
+
     if game.paused and not is_owner(message.from_user.id if message.from_user else None):
         return
 
@@ -943,7 +975,6 @@ async def any_text(message: Message):
             u = message.from_user
             if u and u.id in game.players and game.players[u.id].alive:
                 game.silent_offenders.add(u.id)
-                
 
 async def main():
     await db_init()

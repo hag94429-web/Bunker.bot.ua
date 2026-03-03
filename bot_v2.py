@@ -279,11 +279,6 @@ def lobby_text(game: Game) -> str:
         "🧩 Лобі.\n\n"
         f"Гравців: {len(game.players)}\n"
         f"{game.roster_text(only_alive=False)}\n\n"
-        "Кнопка: ➕ Приєднатись\n"
-        "Команди:\n"
-        "• /players — список\n"
-        "• /leave — вийти\n"
-        "• /startgame — старт\n"
     )
 
 async def update_lobby(chat_id: int, game: Game):

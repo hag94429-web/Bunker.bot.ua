@@ -1,21 +1,67 @@
 import os
+import json
 import asyncio
 import random
+from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    ChatMemberAdministrator,
+    ChatMemberOwner,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
-MAX_ROUNDS = 7
-MIN_PLAYERS = 6
+SETTINGS_FILE = Path("settings.json")
 
-DISCUSSION_SECONDS = 60
-VOTE_SECONDS = 15
+DEFAULT_SETTINGS = {
+
+    "t_turn": 60,         
+    "t_vote": 15,         
+    "t_register": 120,      
+    "t_warning": 5,         
+    "t_discussion": 60,     
+    "t_briefing": 20,       
+
+    "anonymous_vote": True,         
+    "show_cards_on_elim_default": False,  
+
+    "min_players": 6,
+    "max_players": 15,
+    "slots_mode": "half_floor",    
+}
+
+def _load_all_settings() -> dict:
+    if SETTINGS_FILE.exists():
+        try:
+            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+def _save_all_settings(data: dict) -> None:
+    SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def get_chat_settings(chat_id: int) -> dict:
+    all_s = _load_all_settings()
+    s = all_s.get(str(chat_id), {})
+    merged = DEFAULT_SETTINGS.copy()
+    merged.update(s)
+    return merged
+
+def set_chat_settings(chat_id: int, new_settings: dict) -> None:
+    all_s = _load_all_settings()
+    all_s[str(chat_id)] = new_settings
+    _save_all_settings(all_s)
+
+MAX_ROUNDS = 7
 
 CATASTROPHES = [
     "Ядерна війна ☢️",
@@ -53,7 +99,7 @@ PHOBIA = ["Клаустрофобія", "Арахнофобія", "Страх в
 BIG_INV = ["Портативний генератор", "Медичний набір", "Набір інструментів", "Міні-теплиця", "Рація", "Запаси палива"]
 BAG = ["Аптечка", "Фільтр води", "Ніж", "Запальничка", "Ліхтарик", "Консерви", "Мотузка", "Батарейки"]
 EXTRA = ["Знає 3 мови", "Має карту місцевості", "Колишній волонтер", "Вміє шити", "Знає першу допомогу", "Колишній спортсмен"]
-SPEC = ["Може вилікувати 1 раз", "Може перекинути 1 голос", "Може врятувати 1 гравця від вильоту", "Може змінити катаклізм (1 раз)"]
+SPEC = ["Може вилікувати 1 раз", "Може перекинути 1 голос", "Може врятувати 1 гравця", "Може змінити катаклізм (1 раз)"]
 
 CARD_KEYS_ORDER = [
     ("Професія", "profession"),
@@ -70,7 +116,40 @@ CARD_KEYS_ORDER = [
     ("Спецздібність", "spec"),
 ]
 
-def bunker_slots(n_players: int) -> int:
+def random_card() -> Dict[str, str]:
+    return {
+        "profession": random.choice(PROF),
+        "sex": random.choice(SEX),
+        "age": str(random.randint(18, 65)),
+        "body": random.choice(BODY),
+        "trait": random.choice(TRAIT),
+        "health": random.choice(HEALTH),
+        "hobby": random.choice(HOBBY),
+        "phobia": random.choice(PHOBIA),
+        "big_inv": random.choice(BIG_INV),
+        "bag": ", ".join(random.sample(BAG, k=2)),
+        "extra": random.choice(EXTRA),
+        "spec": random.choice(SPEC),
+    }
+
+def build_bunker_desc() -> str:
+    size = random.choice(["220 м²", "350 м²", "480 м²", "600 м²"])
+    time_need = random.choice(["6 місяців", "1 рік", "2 роки", "3 роки"])
+    food = random.choice(["їжі вистачить із запасом", "їжі впритул", "їжі критично мало", "їжі майже немає"])
+    items = ", ".join(random.sample(BUNKER_ITEMS, k=3))
+    return (
+        f"🏚 Бункер:\n"
+        f"• Розмір: {size}\n"
+        f"• Час перебування: {time_need}\n"
+        f"• Їжа: {food}\n"
+        f"• В бункері є: {items}\n"
+    )
+
+def percent(part: int, whole: int) -> float:
+    return 0.0 if whole <= 0 else (part / whole) * 100.0
+
+def bunker_slots(n_players: int, slots_mode: str) -> int:
+
     return n_players // 2
 
 def reveals_per_round(n_players: int) -> List[int]:
@@ -92,41 +171,9 @@ def reveals_per_round(n_players: int) -> List[int]:
     base = [3, 2, 1] + [1] * (MAX_ROUNDS - 3)
     return base[:MAX_ROUNDS]
 
-def build_bunker_desc() -> str:
-    size = random.choice(["220 м²", "350 м²", "480 м²", "600 м²"])
-    time_need = random.choice(["6 місяців", "1 рік", "2 роки", "3 роки"])
-    food = random.choice(["їжі вистачить із запасом", "їжі впритул", "їжі критично мало", "їжі майже немає"])
-    items = ", ".join(random.sample(BUNKER_ITEMS, k=3))
-    return (
-        f"🏚 Бункер:\n"
-        f"• Розмір: {size}\n"
-        f"• Час перебування: {time_need}\n"
-        f"• Їжа: {food}\n"
-        f"• В бункері є: {items}\n"
-    )
-
-def percent(part: int, whole: int) -> float:
-    return 0.0 if whole <= 0 else (part / whole) * 100.0
-
-def random_card() -> Dict[str, str]:
-    return {
-        "profession": random.choice(PROF),
-        "sex": random.choice(SEX),
-        "age": str(random.randint(18, 65)),
-        "body": random.choice(BODY),
-        "trait": random.choice(TRAIT),
-        "health": random.choice(HEALTH),
-        "hobby": random.choice(HOBBY),
-        "phobia": random.choice(PHOBIA),
-        "big_inv": random.choice(BIG_INV),
-        "bag": ", ".join(random.sample(BAG, k=2)),
-        "extra": random.choice(EXTRA),
-        "spec": random.choice(SPEC),
-    }
-
 class Phase(str, Enum):
     LOBBY = "lobby"
-    ROUND_START = "round_start"
+    BRIEFING = "briefing"
     PRESENTATION = "presentation"
     DISCUSSION = "discussion"
     SPEECHES = "speeches"
@@ -150,37 +197,36 @@ class Game:
     active: bool = False
     paused: bool = False
 
-    host_id: Optional[int] = None
-    owner_id: Optional[int] = None
-
     phase: Phase = Phase.LOBBY
     round_no: int = 0
     clockwise: bool = True
     order: List[int] = field(default_factory=list)
+
+    host_id: Optional[int] = None
 
     catastrophe: str = ""
     bunker_desc: str = ""
     slots: int = 0
     reveal_plan: List[int] = field(default_factory=list)
 
-    pending_elims_this_round: int = 1
-    skipped_vote_in_round1: bool = False
-
-    vote_open: bool = False
-    votes: Dict[int, int] = field(default_factory=dict)  # voter -> target
-    silent_offenders: Set[int] = field(default_factory=set)
-
-    justified_this_round: Set[int] = field(default_factory=set)
-    justify_candidates: List[int] = field(default_factory=list)
-
-    cards: Dict[int, Dict[str, str]] = field(default_factory=dict)
-    revealed_total: Dict[int, int] = field(default_factory=dict)  # скільки всього відкрив у приваті
-
+    lobby_open: bool = True
     lobby_message_id: Optional[int] = None
 
     timer_task: Optional[asyncio.Task] = None
 
+    vote_open: bool = False
+    votes: Dict[int, int] = field(default_factory=dict)  # voter -> target
+    silent_offenders: Set[int] = field(default_factory=set)
+    justified_this_round: Set[int] = field(default_factory=set)
+
+    cards: Dict[int, Dict[str, str]] = field(default_factory=dict)
+    revealed_total: Dict[int, int] = field(default_factory=dict)
+
+    last_elim_id: Optional[int] = None
+
     players: Dict[int, Player] = field(default_factory=dict)
+
+    settings: dict = field(default_factory=dict)
 
     def alive_ids(self) -> List[int]:
         return [pid for pid, p in self.players.items() if p.alive]
@@ -208,51 +254,55 @@ class Game:
 
 GAMES: Dict[int, Game] = {}
 
-def get_game(chat_id: int) -> Game:
-    if chat_id not in GAMES:
-        GAMES[chat_id] = Game()
-    return GAMES[chat_id]
-
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID_ENV = (os.getenv("OWNER_ID") or "").strip()
-OWNER_ID = int(OWNER_ID_ENV) if OWNER_ID_ENV.isdigit() else None
-
+OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 if not TOKEN:
     raise RuntimeError("Немає BOT_TOKEN у .env")
+if OWNER_ID <= 0:
+    raise RuntimeError("Немає OWNER_ID у .env або він некоректний")
 
 bot = Bot(TOKEN)
 dp = Dispatcher()
 
+def get_game(chat_id: int) -> Game:
+    if chat_id not in GAMES:
+        g = Game()
+        g.settings = get_chat_settings(chat_id)
+        GAMES[chat_id] = g
+    return GAMES[chat_id]
+
 def is_owner(user_id: Optional[int]) -> bool:
-    return OWNER_ID is not None and user_id == OWNER_ID
+    return user_id is not None and user_id == OWNER_ID
 
-def is_host(game: Game, user_id: Optional[int]) -> bool:
-    return user_id is not None and game.host_id == user_id
+async def is_admin_or_owner(chat_id: int, user_id: int) -> bool:
+    if is_owner(user_id):
+        return True
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        return isinstance(member, (ChatMemberAdministrator, ChatMemberOwner))
+    except Exception:
+        return False
 
-def blocked_by_pause_for_message(game: Game, message: Message) -> bool:
-
-    if not game.paused:
+def blocked_by_pause_for_message(g: Game, message: Message) -> bool:
+    if not g.paused:
         return False
     uid = message.from_user.id if message.from_user else None
     if is_owner(uid) and (message.text or "").strip().startswith("/resume"):
         return False
-
-    if is_owner(uid) and (message.text or "").strip().startswith("/"):
-
-        return True
     return True
 
-def blocked_by_pause_for_callback(game: Game, call: CallbackQuery) -> bool:
-    if not game.paused:
+def blocked_by_pause_for_callback(g: Game, call: CallbackQuery) -> bool:
+    if not g.paused:
         return False
-    uid = call.from_user.id if call.from_user else None
+    uid = call.from_user.id
     return not is_owner(uid)
 
-async def cancel_timer(game: Game):
-    if game.timer_task and not game.timer_task.done():
-        game.timer_task.cancel()
-    game.timer_task = None
+async def cancel_timer(g: Game):
+    if g.timer_task and not g.timer_task.done():
+        g.timer_task.cancel()
+    g.timer_task = None
+
 
 def kb_lobby() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
@@ -260,10 +310,9 @@ def kb_lobby() -> InlineKeyboardMarkup:
     kb.adjust(1)
     return kb.as_markup()
 
-def kb_vote(game: Game) -> InlineKeyboardMarkup:
+def kb_vote(g: Game) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    alive = game.alive_players()
-    for i, p in enumerate(alive, start=1):
+    for i, p in enumerate(g.alive_players(), start=1):
         kb.button(text=f"{i}. {p.tag()}", callback_data=f"vote:{p.user_id}")
     kb.adjust(1)
     return kb.as_markup()
@@ -274,100 +323,252 @@ def kb_dm_reveal(chat_id: int) -> InlineKeyboardMarkup:
     kb.adjust(1)
     return kb.as_markup()
 
-def lobby_text(game: Game) -> str:
+def kb_reveal_elim(user_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Так, показати", callback_data=f"elimreveal:yes:{user_id}")
+    kb.button(text="❌ Ні, не показувати", callback_data=f"elimreveal:no:{user_id}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def lobby_text(g: Game) -> str:
+    s = g.settings
     return (
         "🧩 Лобі.\n\n"
-        f"Гравців: {len(game.players)}\n"
-        f"{game.roster_text(only_alive=False)}\n\n"
+        f"Статус: {'відкрите ✅' if g.lobby_open else 'закрите ⛔'}\n"
+        f"Гравців: {len(g.players)}\n"
+        f"{g.roster_text(only_alive=False)}\n\n"
+        "Кнопка: ➕ Приєднатись\n\n"
+        f"⏱ Реєстрація: {s.get('t_register', 120)}с | "
+        f"Ознайомлення: {s.get('t_briefing', 20)}с | "
+        f"Обговорення: {s.get('t_discussion', 60)}с | "
+        f"Голосування: {s.get('t_vote', 15)}с\n\n"
+        "Команди:\n"
+        "• /players — список\n"
+        "• /leave — вийти\n"
+        "• /startgame — старт\n"
+        "• /settings — налаштування (OWNER/адмін, тільки коли гри немає)\n"
     )
 
-async def update_lobby(chat_id: int, game: Game):
-    if game.lobby_message_id:
+async def update_lobby(chat_id: int, g: Game):
+    if g.lobby_message_id:
         try:
             await bot.edit_message_text(
                 chat_id=chat_id,
-                message_id=game.lobby_message_id,
-                text=lobby_text(game),
-                reply_markup=kb_lobby(),
+                message_id=g.lobby_message_id,
+                text=lobby_text(g),
+                reply_markup=kb_lobby()
             )
             return
         except Exception:
             pass
+    msg = await bot.send_message(chat_id, lobby_text(g), reply_markup=kb_lobby())
+    g.lobby_message_id = msg.message_id
 
-    msg = await bot.send_message(chat_id, lobby_text(game), reply_markup=kb_lobby())
-    game.lobby_message_id = msg.message_id
+def kb_settings_main() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⏱ Таймери", callback_data="set:timers")
+    kb.button(text="📜 Загальні правила", callback_data="set:rules")
+    kb.button(text="✅ Готово (зберегти)", callback_data="set:save")
+    kb.adjust(1)
+    return kb.as_markup()
 
+def kb_settings_timers(s: dict) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+
+    kb.button(text=f"🎙 Хід: {s['t_turn']}с", callback_data="noop")
+    kb.button(text="−10", callback_data="set:t_turn:-10")
+    kb.button(text="−5", callback_data="set:t_turn:-5")
+    kb.button(text="+5", callback_data="set:t_turn:+5")
+    kb.button(text="+10", callback_data="set:t_turn:+10")
+
+    kb.button(text=f"🗳 Голосування: {s['t_vote']}с", callback_data="noop")
+    kb.button(text="−10", callback_data="set:t_vote:-10")
+    kb.button(text="−5", callback_data="set:t_vote:-5")
+    kb.button(text="+5", callback_data="set:t_vote:+5")
+    kb.button(text="+10", callback_data="set:t_vote:+10")
+
+    kb.button(text=f"🧩 Реєстрація: {s['t_register']}с", callback_data="noop")
+    kb.button(text="−30", callback_data="set:t_register:-30")
+    kb.button(text="−10", callback_data="set:t_register:-10")
+    kb.button(text="+10", callback_data="set:t_register:+10")
+    kb.button(text="+30", callback_data="set:t_register:+30")
+
+    kb.button(text=f"⚠️ Попередження: {s['t_warning']}с", callback_data="noop")
+    kb.button(text="−2", callback_data="set:t_warning:-2")
+    kb.button(text="−1", callback_data="set:t_warning:-1")
+    kb.button(text="+1", callback_data="set:t_warning:+1")
+    kb.button(text="+2", callback_data="set:t_warning:+2")
+
+    kb.button(text=f"💬 Обговорення: {s['t_discussion']}с", callback_data="noop")
+    kb.button(text="−10", callback_data="set:t_discussion:-10")
+    kb.button(text="−5", callback_data="set:t_discussion:-5")
+    kb.button(text="+5", callback_data="set:t_discussion:+5")
+    kb.button(text="+10", callback_data="set:t_discussion:+10")
+
+    kb.button(text=f"👀 Ознайомлення: {s['t_briefing']}с", callback_data="noop")
+    kb.button(text="−10", callback_data="set:t_briefing:-10")
+    kb.button(text="−5", callback_data="set:t_briefing:-5")
+    kb.button(text="+5", callback_data="set:t_briefing:+5")
+    kb.button(text="+10", callback_data="set:t_briefing:+10")
+
+    kb.button(text="⬅️ Назад", callback_data="set:back")
+    kb.adjust(1, 4, 1, 4, 1, 4, 1, 4, 1, 4, 1, 4, 1)
+    return kb.as_markup()
+
+def kb_settings_rules(s: dict) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    av = "Так" if s.get("anonymous_vote", True) else "Ні"
+    sc = "Так" if s.get("show_cards_on_elim_default", False) else "Ні"
+
+    kb.button(text=f"🕶 Анонімність голосу: {av}", callback_data="set:toggle:anonymous_vote")
+    kb.button(text=f"🃏 Картки після вильоту (дефолт): {sc}", callback_data="set:toggle:show_cards_on_elim_default")
+
+    kb.button(text=f"👥 Мін гравців: {s.get('min_players', 6)}", callback_data="noop")
+    kb.button(text="−1", callback_data="set:min_players:-1")
+    kb.button(text="+1", callback_data="set:min_players:+1")
+
+    kb.button(text=f"👥 Макс гравців: {s.get('max_players', 15)}", callback_data="noop")
+    kb.button(text="−1", callback_data="set:max_players:-1")
+    kb.button(text="+1", callback_data="set:max_players:+1")
+
+    kb.button(text="⬅️ Назад", callback_data="set:back")
+    kb.adjust(1, 1, 1, 2, 1, 2, 1)
+    return kb.as_markup()
+
+RULES_TEXT = (
+    "📜 Загальні правила (коротко)\n\n"
+    "• Картки гравцям надсилаються в приват, відкриття кнопкою.\n"
+    "• Після презентацій — авто-обговорення за таймером.\n"
+    "• Голосування: авто-таймер, хто не проголосував — голос проти себе.\n"
+    "• 70%+ за одного — виліт без виправдання.\n"
+    "• Інакше — виправдання і переголосування.\n"
+    "• Після вильоту можна (за рішенням OWNER/адмінів) показати повний набір карток.\n"
+)
 
 async def ensure_dm_open(user_id: int) -> bool:
     try:
-        await bot.send_message(user_id, "✅ Приват відкрито. Під час гри я надішлю тобі картку.")
+        await bot.send_message(user_id, "✅ Приват відкрито. Тепер я можу слати тобі картки.")
         return True
     except Exception:
         return False
 
+async def deal_cards(chat_id: int, g: Game):
+    g.cards.clear()
+    g.revealed_total.clear()
 
-async def deal_cards(chat_id: int, game: Game):
-    game.cards.clear()
-    game.revealed_total.clear()
+    for pid in g.players.keys():
+        g.cards[pid] = random_card()
+        g.revealed_total[pid] = 0
 
-    for pid in game.players.keys():
-        game.cards[pid] = random_card()
-        game.revealed_total[pid] = 0
-
-    for pid in game.players.keys():
+    for pid in g.players.keys():
         try:
             await bot.send_message(
                 pid,
-                "🧾 Твоя картка персонажа (приватно).\n\n"
-                "Натискай кнопку, щоб відкрити характеристику.\n"
-                "⚠️ Відкривай рівно стільки, скільки потрібно у раунді.",
+                "🧾 Твоя картка персонажа (приватно).\n"
+                "Натискай кнопку нижче, щоб відкривати характеристики.",
                 reply_markup=kb_dm_reveal(chat_id)
             )
         except Exception:
             pass
 
-def can_reveal_in_round(game: Game, user_id: int) -> Tuple[bool, str]:
-    need = game.reveal_plan[game.round_no - 1] if game.round_no >= 1 else 0
-    if need <= 0:
-        return False, "У цьому раунді відкривати характеристики не потрібно."
-
-    already_should_have = sum(game.reveal_plan[: game.round_no - 1])
-    total = game.revealed_total.get(user_id, 0)
-    revealed_this_round = max(0, total - already_should_have)
-    if revealed_this_round >= need:
-        return False, f"Ти вже відкрив {need} характеристик у цьому раунді."
-    return True, ""
-
-def next_unrevealed(game: Game, user_id: int) -> Optional[Tuple[str, str]]:
-    total = game.revealed_total.get(user_id, 0)
+def next_unrevealed(g: Game, user_id: int) -> Optional[Tuple[str, str]]:
+    total = g.revealed_total.get(user_id, 0)
     if total >= len(CARD_KEYS_ORDER):
         return None
-    return CARD_KEYS_ORDER[total] 
+    return CARD_KEYS_ORDER[total]
 
-async def post_intro(chat_id: int, game: Game):
-    await bot.send_message(
-        chat_id,
-        "☢️ СИРЕНИ. ПАНІКА. ПОПІЛ НА НЕБІ.\n\n"
-        f"Катаклізм: {game.catastrophe}\n\n"
-        f"{game.bunker_desc}\n"
-        f"👁 Місць у бункері: {game.slots} із {len(game.players)}.\n"
-        "Ті, хто не потрапить — загинуть.\n\n"
-        "📩 Картки роздано в ЛС."
-    )
+def full_cards_text(g: Game, user_id: int) -> str:
+    cards = g.cards.get(user_id, {})
+    if not cards:
+        return "🃏 Картки відсутні."
+    lines = [f"🃏 Повний набір карток: {g.players[user_id].tag()}"]
+    for title, key in CARD_KEYS_ORDER:
+        lines.append(f"• {title}: {cards.get(key, '—')}")
+    return "\n".join(lines)
 
-async def apply_silence_penalty(game: Game):
-    for pid in game.silent_offenders:
-        p = game.players.get(pid)
+async def run_timer_with_warning(chat_id: int, seconds: int, warn: int, warn_text: str) -> None:
+    if warn >= seconds or warn <= 0:
+        await asyncio.sleep(max(0, seconds))
+        return
+    await asyncio.sleep(max(0, seconds - warn))
+    await bot.send_message(chat_id, warn_text)
+    await asyncio.sleep(max(0, warn))
+
+async def start_register_timer(chat_id: int, g: Game):
+    await cancel_timer(g)
+    sec = int(g.settings.get("t_register", 120))
+    warn = int(g.settings.get("t_warning", 5))
+
+    async def _task():
+        await run_timer_with_warning(chat_id, sec, warn, f"⚠️ До кінця реєстрації {warn} сек!")
+        if g.active or g.paused:
+            return
+        g.lobby_open = False
+        await bot.send_message(chat_id, "⛔ Реєстрацію закрито.")
+        await update_lobby(chat_id, g)
+
+    g.timer_task = asyncio.create_task(_task())
+
+async def start_briefing_timer(chat_id: int, g: Game):
+    await cancel_timer(g)
+    sec = int(g.settings.get("t_briefing", 20))
+    warn = int(g.settings.get("t_warning", 5))
+
+    async def _task():
+        await bot.send_message(chat_id, f"👀 Ознайомлення: {sec} сек.")
+        await run_timer_with_warning(chat_id, sec, warn, f"⚠️ До кінця ознайомлення {warn} сек!")
+        if not g.active or g.paused:
+            return
+        await start_presentation(chat_id, g)
+
+    g.timer_task = asyncio.create_task(_task())
+
+async def start_discussion_timer(chat_id: int, g: Game):
+    await cancel_timer(g)
+    sec = int(g.settings.get("t_discussion", 60))
+    warn = int(g.settings.get("t_warning", 5))
+
+    async def _task():
+        await run_timer_with_warning(chat_id, sec, warn, f"⚠️ До кінця обговорення {warn} сек!")
+        if not g.active or g.paused:
+            return
+        g.phase = Phase.SPEECHES
+        await bot.send_message(
+            chat_id,
+            "⏱ Обговорення завершено.\n"
+            "⚖️ Етап 3: ОБВИНУВАЧЕННЯ / ЗАХИСТ.\n"
+            "Кожному по 30 секунд (ви самі тримаєте час).\n"
+            "Після виступів — /openvote"
+        )
+
+    g.timer_task = asyncio.create_task(_task())
+
+async def start_vote_timer(chat_id: int, g: Game):
+    await cancel_timer(g)
+    sec = int(g.settings.get("t_vote", 15))
+    warn = int(g.settings.get("t_warning", 5))
+
+    async def _task():
+        await run_timer_with_warning(chat_id, sec, warn, f"⚠️ До кінця голосування {warn} сек!")
+        if not g.active or g.paused:
+            return
+        if g.vote_open:
+            await close_vote_internal(chat_id, g, forced_by_timer=True)
+
+    g.timer_task = asyncio.create_task(_task())
+
+async def apply_silence_penalty(g: Game):
+    for pid in g.silent_offenders:
+        p = g.players.get(pid)
         if p and p.alive:
             p.skip_speech_next_round = True
 
-def count_votes_with_absent_as_self(game: Game) -> Dict[int, int]:
-    alive_ids = game.alive_ids()
+def count_votes_with_absent_as_self(g: Game) -> Dict[int, int]:
+    alive_ids = g.alive_ids()
     counts: Dict[int, int] = {pid: 0 for pid in alive_ids}
-
     for voter_id in alive_ids:
-        if voter_id in game.votes and game.votes[voter_id] in counts:
-            counts[game.votes[voter_id]] += 1
+        if voter_id in g.votes and g.votes[voter_id] in counts:
+            counts[g.votes[voter_id]] += 1
         else:
             counts[voter_id] += 1
     return counts
@@ -379,40 +580,32 @@ def top_candidates(counts: Dict[int, int]) -> Tuple[List[int], int]:
     cands = [pid for pid, c in counts.items() if c == mx]
     return cands, mx
 
-async def start_discussion_timer(chat_id: int, game: Game):
-    await cancel_timer(game)
-    game.timer_task = asyncio.create_task(_discussion_timer(chat_id, game))
-
-async def _discussion_timer(chat_id: int, game: Game):
-    await asyncio.sleep(DISCUSSION_SECONDS)
-    if not game.active or game.paused:
-        return
-
-    game.phase = Phase.SPEECHES
+async def start_presentation(chat_id: int, g: Game):
+    g.phase = Phase.PRESENTATION
+    order_tags = [g.players[pid].tag() for pid in g.order if g.players.get(pid) and g.players[pid].alive]
+    need = g.reveal_plan[g.round_no - 1]
     await bot.send_message(
         chat_id,
-        "⏱ 1 хв обговорення минула.\n"
-        "⚖️ Етап 3: ОБВИНУВАЧЕННЯ / ЗАХИСТ.\n"
-        "Кожному по 30 секунд у тому ж порядку.\n"
-        "Після виступів — /openvote"
+        f"🎙 Раунд {g.round_no}. Етап 1: ПРЕЗЕНТАЦІЯ.\n"
+        f"Кожен відкриває в ЛС і озвучує: {need} характеристик.\n\n"
+        f"Порядок: {', '.join(order_tags)}\n\n"
+        "Коли всі виступили — /next"
     )
 
-async def start_vote_timer(chat_id: int, game: Game):
-    await cancel_timer(game)
-    game.timer_task = asyncio.create_task(_vote_timer(chat_id, game))
-
-async def _vote_timer(chat_id: int, game: Game):
-    await asyncio.sleep(VOTE_SECONDS)
-    if not game.active or game.paused:
-        return
-    if game.vote_open:
-
-        await close_vote_internal(chat_id, game, forced_by_timer=True)
+async def post_intro(chat_id: int, g: Game):
+    await bot.send_message(
+        chat_id,
+        "☢️ СИРЕНИ. ПАНІКА. ПОПІЛ НА НЕБІ.\n\n"
+        f"Катаклізм: {g.catastrophe}\n\n"
+        f"{g.bunker_desc}\n"
+        f"👁 Місць у бункері: {g.slots} із {len(g.players)}.\n\n"
+        "📩 Картки роздано в ЛС."
+    )
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
 
     if message.chat.type == "private":
@@ -421,101 +614,171 @@ async def cmd_start(message: Message):
 
     await message.answer(
         "🏚 BUNKER UA BOT\n\n"
-        "• /new — створити лобі\n"
+        "Команди:\n"
+        "• /new — лобі\n"
         "• /players — гравці\n"
         "• /leave — вийти\n"
         "• /startgame — старт\n"
-        "• /next — рух етапів (хост)\n"
-        "• /openvote — голосування (хост)\n"
-        "• /closevote — закрити (хост)\n"
-        "• /force_next — примусово перескочити етап (хост/OWNER)\n"
+        "• /next — наступний етап\n"
+        "• /openvote — голосування\n"
+        "• /closevote — закрити голосування\n"
+        "• /settings — налаштування (OWNER/адмін, тільки коли гри немає)\n"
         "• /pause, /resume (OWNER)\n"
-        "• /end — завершити гру\n"
+        "• /end — завершити\n"
     )
 
 @dp.message(Command("new"))
 async def cmd_new(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
-
     if message.chat.type == "private":
         await message.answer("Створи лобі у групі 🙂")
         return
 
-    game.__dict__.update(Game().__dict__)
-    game.owner_id = OWNER_ID
-    await update_lobby(message.chat.id, game)
+    settings = get_chat_settings(message.chat.id)
+    GAMES[message.chat.id] = Game()
+    g = get_game(message.chat.id)
+    g.settings = settings
+
+    g.lobby_open = True
+    await update_lobby(message.chat.id, g)
+    await start_register_timer(message.chat.id, g)
 
 @dp.message(Command("players"))
 async def cmd_players(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
-
     if message.chat.type == "private":
         await message.answer("Ця команда працює у групі.")
         return
-    await message.answer("👥 Гравці:\n" + game.roster_text(only_alive=False))
+    await message.answer("👥 Гравці:\n" + g.roster_text(only_alive=False))
 
 @dp.message(Command("leave"))
 async def cmd_leave(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
-
     if message.chat.type == "private":
         await message.answer("Ця команда працює у групі.")
         return
-
-    if game.active:
+    if g.active:
         await message.answer("Гра вже стартувала — вийти не можна.")
         return
 
     u = message.from_user
     if not u:
         return
-
-    if u.id not in game.players:
+    if u.id not in g.players:
         await message.answer("Тебе немає в лобі. Натисни «➕ Приєднатись».")
         return
 
-    tag = game.players[u.id].tag()
-    del game.players[u.id]
-    await message.answer(f"❌ {tag} вийшов. Гравців: {len(game.players)}")
-    await update_lobby(message.chat.id, game)
+    tag = g.players[u.id].tag()
+    del g.players[u.id]
+    await message.answer(f"❌ {tag} вийшов. Гравців: {len(g.players)}")
+    await update_lobby(message.chat.id, g)
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: Message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
+        return
+    if message.chat.type == "private":
+        await message.answer("⚙️ Налаштування доступні тільки в групі.")
+        return
+    if g.active:
+        await message.answer("⛔ Налаштування можна змінювати тільки коли гри немає.\nЗаверши гру командою /end.")
+        return
+
+    uid = message.from_user.id if message.from_user else None
+    if uid is None:
+        return
+    if not await is_admin_or_owner(message.chat.id, uid):
+        await message.answer("⛔ Налаштування може відкривати тільки OWNER або адмін чату.")
+        return
+
+    g.settings = get_chat_settings(message.chat.id)
+    await message.answer("⚙️ Налаштування", reply_markup=kb_settings_main())
+
+@dp.message(Command("pause"))
+async def cmd_pause(message: Message):
+    g = get_game(message.chat.id)
+    if not is_owner(message.from_user.id if message.from_user else None):
+        return
+    g.paused = True
+    await cancel_timer(g)
+    await message.answer("⏸ Пауза: бот мовчить для всіх. Тільки OWNER може /resume.")
+
+@dp.message(Command("resume"))
+async def cmd_resume(message: Message):
+    g = get_game(message.chat.id)
+    if not is_owner(message.from_user.id if message.from_user else None):
+        return
+    g.paused = False
+    await message.answer("▶️ Відновлено.")
+
+@dp.message(Command("end"))
+async def cmd_end(message: Message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
+        return
+    await cancel_timer(g)
+    settings = get_chat_settings(message.chat.id)
+    GAMES[message.chat.id] = Game()
+    g = get_game(message.chat.id)
+    g.settings = settings
+    await message.answer("🏁 Гру завершено. /new щоб почати знову.")
+
+@dp.message(Command("status"))
+async def cmd_status(message: Message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
+        return
+    if not g.active:
+        await message.answer("Немає активної гри. /new → «➕ Приєднатись» → /startgame")
+        return
+    await message.answer(
+        f"📌 Стан:\n"
+        f"Раунд: {g.round_no}/{MAX_ROUNDS}\n"
+        f"Фаза: {g.phase}\n"
+        f"Живі: {len(g.alive_ids())} | Місць: {g.slots}\n"
+        f"Голосування: {'відкрите' if g.vote_open else 'закрите'}"
+    )
 
 @dp.message(Command("startgame"))
 async def cmd_startgame(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
-
     if message.chat.type == "private":
         await message.answer("Стартуй гру в групі 🙂")
         return
-
-    if game.active:
+    if g.active:
         await message.answer("Гра вже йде.")
         return
 
-    if len(game.players) < MIN_PLAYERS:
-        await message.answer(f"Потрібно мінімум {MIN_PLAYERS} гравців.")
+    g.lobby_open = False
+    await cancel_timer(g)
+
+    s = g.settings
+    min_p = int(s.get("min_players", 6))
+    max_p = int(s.get("max_players", 15))
+
+    if len(g.players) < min_p:
+        await message.answer(f"Потрібно мінімум {min_p} гравців.")
+        return
+    if len(g.players) > max_p:
+        await message.answer(f"Забагато гравців. Максимум {max_p}.")
         return
 
     u = message.from_user
     if not u:
         return
-
-    if game.host_id is None:
-        game.host_id = u.id
-
-    if not (is_host(game, u.id) or is_owner(u.id)):
-        await message.answer("Стартувати може тільки хост або OWNER.")
-        return
+    g.host_id = u.id
 
     missing = []
-    for pid in list(game.players.keys()):
+    for pid in list(g.players.keys()):
         ok = await ensure_dm_open(pid)
         if not ok:
             missing.append(pid)
@@ -523,255 +786,149 @@ async def cmd_startgame(message: Message):
         await message.answer("⚠️ Дехто не відкрив ЛС. Нехай натиснуть /start у приваті з ботом і повтори /startgame.")
         return
 
-    game.active = True
-    game.catastrophe = random.choice(CATASTROPHES)
-    game.bunker_desc = build_bunker_desc()
-    game.slots = bunker_slots(len(game.players))
-    game.reveal_plan = reveals_per_round(len(game.players))
+    g.active = True
+    g.round_no = 1
+    g.clockwise = True
 
-    game.round_no = 1
-    game.clockwise = True
-    game.pending_elims_this_round = 1
-    game.skipped_vote_in_round1 = False
+    g.catastrophe = random.choice(CATASTROPHES)
+    g.bunker_desc = build_bunker_desc()
+    g.slots = bunker_slots(len(g.players), s.get("slots_mode", "half_floor"))
+    g.reveal_plan = reveals_per_round(len(g.players))
 
-    for p in game.players.values():
+    for p in g.players.values():
         p.alive = True
         p.skip_speech_next_round = False
 
-    game.votes.clear()
-    game.silent_offenders.clear()
-    game.justified_this_round.clear()
-    game.justify_candidates.clear()
-    game.vote_open = False
+    g.votes.clear()
+    g.silent_offenders.clear()
+    g.justified_this_round.clear()
+    g.vote_open = False
 
-    game.make_round_order()
-    game.phase = Phase.ROUND_START
+    g.make_round_order()
 
-    await post_intro(message.chat.id, game)
-    await deal_cards(message.chat.id, game)
+    await post_intro(message.chat.id, g)
+    await deal_cards(message.chat.id, g)
 
-    await message.answer(
-        f"Раунд 1.\n"
-        f"Напрямок: за годинниковою.\n"
-        f"Кожен відкриває у ЛС і озвучує: {game.reveal_plan[0]} характеристик (включно з професією).\n\n"
-        "Починаємо етапи: /next"
-    )
-
-@dp.message(Command("pause"))
-async def cmd_pause(message: Message):
-    game = get_game(message.chat.id)
-    if not is_owner(message.from_user.id if message.from_user else None):
-        return
-    game.paused = True
-    await cancel_timer(game)
-    await message.answer("⏸ Пауза: бот мовчить для всіх. Тільки OWNER може /resume.")
-
-@dp.message(Command("resume"))
-async def cmd_resume(message: Message):
-    game = get_game(message.chat.id)
-    if not is_owner(message.from_user.id if message.from_user else None):
-        return
-    game.paused = False
-    await message.answer("▶️ Відновлено.")
-
-@dp.message(Command("end"))
-async def cmd_end(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
-        return
-
-    await cancel_timer(game)
-    game.__dict__.update(Game().__dict__)
-    await message.answer("🏁 Гру завершено. /new щоб почати знову.")
-
-@dp.message(Command("status"))
-async def cmd_status(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
-        return
-
-    if not game.active:
-        await message.answer("Немає активної гри. /new → кнопка «Приєднатись» → /startgame")
-        return
-
-    await message.answer(
-        f"📌 Стан гри:\n"
-        f"Раунд: {game.round_no}/{MAX_ROUNDS}\n"
-        f"Фаза: {game.phase}\n"
-        f"Живі: {len(game.alive_ids())} | Місць: {game.slots}\n"
-        f"Голосування відкрите: {'так' if game.vote_open else 'ні'}\n\n"
-        f"👥 Живі:\n{game.roster_text(True)}"
-    )
-
-@dp.message(Command("force_next"))
-async def cmd_force_next(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
-        return
-
-    u = message.from_user
-    if not u:
-        return
-    if not game.active:
-        await message.answer("Немає активної гри.")
-        return
-    if not (is_host(game, u.id) or is_owner(u.id)):
-        await message.answer("Тільки хост/OWNER може /force_next.")
-        return
-
-    await cancel_timer(game)
-
-    if game.phase == Phase.PRESENTATION:
-        game.phase = Phase.DISCUSSION
-        await message.answer("💬 Етап 2: КОЛЕКТИВНЕ ОБГОВОРЕННЯ (60с, авто).")
-        await start_discussion_timer(message.chat.id, game)
-        return
-
-    if game.phase == Phase.DISCUSSION:
-        game.phase = Phase.SPEECHES
-        await message.answer(
-            "⚖️ Етап 3: ОБВИНУВАЧЕННЯ / ЗАХИСТ.\n"
-            "Кожному по 30 секунд.\n"
-            "Після виступів — /openvote"
-        )
-        return
-
-    if game.phase == Phase.SPEECHES:
-        await message.answer("Відкривай голосування: /openvote")
-        return
-
-    if game.phase == Phase.VOTE:
-        await close_vote_internal(message.chat.id, game, forced_by_timer=False)
-        return
-
-    await message.answer("Нема куди перескочити з цього етапу.")
+    g.phase = Phase.BRIEFING
+    await update_lobby(message.chat.id, g)
+    await start_briefing_timer(message.chat.id, g)
 
 @dp.message(Command("next"))
 async def cmd_next(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
-
-    u = message.from_user
-    if not u:
-        return
-    if not game.active:
+    if not g.active:
         await message.answer("Гра не стартувала.")
         return
-    if not (is_host(game, u.id) or is_owner(u.id)):
-        await message.answer("Тільки хост/OWNER може /next.")
+
+    uid = message.from_user.id if message.from_user else None
+    if uid is None:
+        return
+    if not (uid == g.host_id or is_owner(uid)):
+        await message.answer("Тільки хост або OWNER може /next.")
         return
 
-    if game.need_finish():
-        game.phase = Phase.FINISH
-        await message.answer(f"🏁 ФІНАЛ.\nПереможці:\n{game.roster_text(True)}")
-        game.active = False
+    if g.need_finish():
+        g.phase = Phase.FINISH
+        await bot.send_message(message.chat.id, f"🏁 ФІНАЛ.\nПереможці:\n{g.roster_text(True)}")
+        g.active = False
         return
 
-    if game.phase in (Phase.ROUND_START, Phase.PRESENTATION):
-        game.phase = Phase.PRESENTATION
-        order_tags = [game.players[pid].tag() for pid in game.order if game.players.get(pid) and game.players[pid].alive]
-        need = game.reveal_plan[game.round_no - 1]
-        await message.answer(
-            f"🎙 Раунд {game.round_no}. Етап 1: ПРЕЗЕНТАЦІЯ.\n"
-            "Кожному — 1 хвилина (ви самі контролюєте).\n"
-            f"У цьому раунді відкрий у ЛС і озвуч: {need} характеристик.\n\n"
-            f"Порядок: {', '.join(order_tags)}\n\n"
-            "Коли всі виступили — /next"
-        )
+    if g.phase == Phase.PRESENTATION:
+        g.phase = Phase.DISCUSSION
+        sec = int(g.settings.get("t_discussion", 60))
+        await bot.send_message(message.chat.id, f"💬 Обговорення: {sec} сек (авто).")
+        await start_discussion_timer(message.chat.id, g)
         return
 
-    if game.phase == Phase.DISCUSSION:
+    if g.phase == Phase.DISCUSSION:
 
-        await cancel_timer(game)
-        game.phase = Phase.SPEECHES
-        await message.answer(
-            "⏭ Обговорення завершено раніше.\n"
+        await cancel_timer(g)
+        g.phase = Phase.SPEECHES
+        await bot.send_message(
+            message.chat.id,
+            "⏭ Обговорення завершено.\n"
             "⚖️ Етап 3: ОБВИНУВАЧЕННЯ / ЗАХИСТ.\n"
             "Кожному по 30 секунд.\n"
             "Після виступів — /openvote"
         )
         return
 
-    if game.phase == Phase.PRESENTATION:
-        game.phase = Phase.DISCUSSION
-        await message.answer(f"💬 Етап 2: КОЛЕКТИВНЕ ОБГОВОРЕННЯ.\n{DISCUSSION_SECONDS} секунд (авто).")
-        await start_discussion_timer(message.chat.id, game)
+    if g.phase in (Phase.BRIEFING, Phase.LOBBY):
+        await start_presentation(message.chat.id, g)
         return
 
-    if game.phase == Phase.SPEECHES:
-        await message.answer("Після промов відкрий голосування: /openvote")
-        return
-
-    if game.phase == Phase.VOTE:
-        await message.answer("Голосування вже йде. Воно закриється автоматично або /closevote.")
-        return
-
-    await message.answer("Немає наступного етапу. /status")
+    await message.answer("Зараз /next не потрібен. /status")
 
 @dp.message(Command("openvote"))
 async def cmd_openvote(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
-
-    u = message.from_user
-    if not u:
-        return
-    if not game.active:
+    if not g.active:
         await message.answer("Гра не стартувала.")
         return
-    if not (is_host(game, u.id) or is_owner(u.id)):
-        await message.answer("Відкрити голосування може тільки хост/OWNER.")
+
+    uid = message.from_user.id if message.from_user else None
+    if uid is None:
         return
-    if game.vote_open:
+    if not (uid == g.host_id or is_owner(uid)):
+        await message.answer("Відкрити голосування може тільки хост або OWNER.")
+        return
+    if g.vote_open:
         await message.answer("Голосування вже відкрите.")
         return
 
-    await cancel_timer(game)
+    await cancel_timer(g)
 
-    game.phase = Phase.VOTE
-    game.vote_open = True
-    game.votes.clear()
-    game.silent_offenders.clear()
+    g.phase = Phase.VOTE
+    g.vote_open = True
+    g.votes.clear()
+    g.silent_offenders.clear()
 
-    await message.answer(
-        f"🗳 ГОЛОСУВАННЯ ({VOTE_SECONDS} сек, авто).\n"
+    sec = int(g.settings.get("t_vote", 15))
+    await bot.send_message(
+        message.chat.id,
+        f"🗳 ГОЛОСУВАННЯ ({sec} сек, авто).\n"
         "Тиша! Будь-які повідомлення = штраф.\n"
-        "Натисни кнопку, щоб проголосувати 👇",
-        reply_markup=kb_vote(game)
+        "Натисни кнопку 👇",
+        reply_markup=kb_vote(g)
     )
-
-    await start_vote_timer(message.chat.id, game)
+    await start_vote_timer(message.chat.id, g)
 
 @dp.message(Command("closevote"))
 async def cmd_closevote(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
-
-    u = message.from_user
-    if not u:
-        return
-    if not game.active:
+    if not g.active:
         await message.answer("Гра не стартувала.")
         return
-    if not (is_host(game, u.id) or is_owner(u.id)):
-        await message.answer("Закривати голосування може тільки хост/OWNER.")
+
+    uid = message.from_user.id if message.from_user else None
+    if uid is None:
         return
-    if not game.vote_open:
+    if not (uid == g.host_id or is_owner(uid)):
+        await message.answer("Закривати голосування може тільки хост або OWNER.")
+        return
+    if not g.vote_open:
         await message.answer("Немає відкритого голосування.")
         return
 
-    await cancel_timer(game)
-    await close_vote_internal(message.chat.id, game, forced_by_timer=False)
+    await cancel_timer(g)
+    await close_vote_internal(message.chat.id, g, forced_by_timer=False)
+
+@dp.callback_query(F.data == "noop")
+async def cb_noop(call: CallbackQuery):
+    await call.answer()
 
 @dp.callback_query(F.data == "lobby:join")
 async def cb_join(call: CallbackQuery):
     if call.message is None:
         return
-    game = get_game(call.message.chat.id)
-    if blocked_by_pause_for_callback(game, call):
+    g = get_game(call.message.chat.id)
+    if blocked_by_pause_for_callback(g, call):
         await call.answer("Пауза.", show_alert=False)
         return
 
@@ -779,55 +936,56 @@ async def cb_join(call: CallbackQuery):
         await call.answer("Гра працює у групі 🙂", show_alert=True)
         return
 
-    if game.active:
+    if g.active:
         await call.answer("Гра вже йде.", show_alert=True)
         return
 
+    if not g.lobby_open:
+        await call.answer("Реєстрація закрита ⛔", show_alert=True)
+        return
+
     u = call.from_user
-    if u.id in game.players:
+    if u.id in g.players:
         await call.answer("Ти вже в лобі ✅", show_alert=False)
         return
 
-    game.players[u.id] = Player(user_id=u.id, name=u.full_name, username=(u.username or ""))
+    max_p = int(g.settings.get("max_players", 15))
+    if len(g.players) >= max_p:
+        await call.answer(f"Максимум {max_p} гравців.", show_alert=True)
+        return
+
+    g.players[u.id] = Player(user_id=u.id, name=u.full_name, username=(u.username or ""))
     await call.answer("✅ Додано", show_alert=False)
-    await update_lobby(call.message.chat.id, game)
+    await update_lobby(call.message.chat.id, g)
 
 @dp.callback_query(F.data.startswith("dm:reveal:"))
 async def cb_dm_reveal(call: CallbackQuery):
     if call.message is None:
         return
-
     chat_id = int(call.data.split(":")[2])
-    game = get_game(chat_id)
+    g = get_game(chat_id)
 
-    if blocked_by_pause_for_callback(game, call):
+    if blocked_by_pause_for_callback(g, call):
         await call.answer("Пауза.", show_alert=False)
         return
-
-    if not game.active:
+    if not g.active:
         await call.answer("Гри немає.", show_alert=True)
         return
 
     uid = call.from_user.id
-    if uid not in game.players or not game.players[uid].alive:
+    if uid not in g.players or not g.players[uid].alive:
         await call.answer("Ти не у грі.", show_alert=True)
         return
 
-    ok, reason = can_reveal_in_round(game, uid)
-    if not ok:
-        await call.answer("Не можна", show_alert=False)
-        await call.message.answer(reason)
-        return
-
-    nxt = next_unrevealed(game, uid)
+    nxt = next_unrevealed(g, uid)
     if not nxt:
-        await call.answer("Все відкрито", show_alert=False)
+        await call.answer("Все відкрито ✅", show_alert=False)
         await call.message.answer("Усі характеристики вже відкриті.")
         return
 
     title, key = nxt
-    value = game.cards[uid][key]
-    game.revealed_total[uid] = game.revealed_total.get(uid, 0) + 1
+    value = g.cards[uid][key]
+    g.revealed_total[uid] = g.revealed_total.get(uid, 0) + 1
 
     await call.answer("✅", show_alert=False)
     await call.message.answer(f"✅ Відкрито: {title} — {value}")
@@ -836,18 +994,17 @@ async def cb_dm_reveal(call: CallbackQuery):
 async def cb_vote(call: CallbackQuery):
     if call.message is None:
         return
-    game = get_game(call.message.chat.id)
+    g = get_game(call.message.chat.id)
 
-    if blocked_by_pause_for_callback(game, call):
+    if blocked_by_pause_for_callback(g, call):
         await call.answer("Пауза.", show_alert=False)
         return
-
-    if not game.active or not game.vote_open:
+    if not g.active or not g.vote_open:
         await call.answer("Зараз немає відкритого голосування.", show_alert=True)
         return
 
     voter_id = call.from_user.id
-    if voter_id not in game.players or not game.players[voter_id].alive:
+    if voter_id not in g.players or not g.players[voter_id].alive:
         await call.answer("Голосують лише живі гравці.", show_alert=True)
         return
 
@@ -857,51 +1014,173 @@ async def cb_vote(call: CallbackQuery):
         await call.answer("Помилка голосу.", show_alert=True)
         return
 
-    if target_id not in game.players or not game.players[target_id].alive:
+    if target_id not in g.players or not g.players[target_id].alive:
         await call.answer("Цей гравець вже не в грі.", show_alert=True)
         return
-
     if target_id == voter_id:
         await call.answer("Сам за себе не можна 😈", show_alert=True)
         return
 
-    game.votes[voter_id] = target_id
-    target_tag = game.players[target_id].tag()
+    g.votes[voter_id] = target_id
+    target_tag = g.players[target_id].tag()
     await call.answer(f"✅ Ти проголосував за {target_tag}", show_alert=False)
+
+@dp.callback_query(F.data.startswith("elimreveal:"))
+async def cb_elimreveal(call: CallbackQuery):
+    if call.message is None:
+        return
+    chat_id = call.message.chat.id
+    g = get_game(chat_id)
+
+    if blocked_by_pause_for_callback(g, call):
+        await call.answer("Пауза.", show_alert=False)
+        return
+
+    uid = call.from_user.id
+    if not await is_admin_or_owner(chat_id, uid):
+        await call.answer("⛔ Тільки OWNER або адмін чату", show_alert=True)
+        return
+
+    parts = call.data.split(":")  
+    action = parts[1]
+    target_id = int(parts[2])
+
+    if action == "yes":
+        await call.message.edit_text("✅ Показую картки.")
+        await bot.send_message(chat_id, full_cards_text(g, target_id))
+        await call.answer()
+        return
+
+    if action == "no":
+        await call.message.edit_text("❌ Картки не показуємо.")
+        await call.answer()
+        return
+
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("set:"))
+async def cb_settings(call: CallbackQuery):
+    if call.message is None:
+        return
+    chat_id = call.message.chat.id
+    g = get_game(chat_id)
+
+    if blocked_by_pause_for_callback(g, call):
+        await call.answer("Пауза.", show_alert=False)
+        return
+
+    if g.active:
+        await call.answer("⛔ Під час гри налаштування змінювати не можна.", show_alert=True)
+        return
+
+    uid = call.from_user.id
+    if not await is_admin_or_owner(chat_id, uid):
+        await call.answer("⛔ Тільки OWNER або адмін чату", show_alert=True)
+        return
+
+    s = g.settings if g.settings else get_chat_settings(chat_id)
+
+    parts = call.data.split(":")
+    action = parts[1]
+
+    if action == "timers":
+        await call.message.edit_text("⏱ Таймери", reply_markup=kb_settings_timers(s))
+        await call.answer()
+        return
+
+    if action == "rules":
+        await call.message.edit_text(RULES_TEXT, reply_markup=kb_settings_rules(s))
+        await call.answer()
+        return
+
+    if action == "back":
+        await call.message.edit_text("⚙️ Налаштування", reply_markup=kb_settings_main())
+        await call.answer()
+        return
+
+    if action == "save":
+        set_chat_settings(chat_id, s)
+        g.settings = s
+        await call.answer("✅ Збережено!", show_alert=False)
+        await call.message.edit_text("✅ Налаштування збережені.", reply_markup=kb_settings_main())
+        return
+
+    if action == "toggle" and len(parts) >= 3:
+        key = parts[2]
+        if key == "anonymous_vote":
+            s["anonymous_vote"] = not bool(s.get("anonymous_vote", True))
+        elif key == "show_cards_on_elim_default":
+            s["show_cards_on_elim_default"] = not bool(s.get("show_cards_on_elim_default", False))
+        g.settings = s
+        await call.message.edit_reply_markup(reply_markup=kb_settings_rules(s))
+        await call.answer("✅")
+        return
+
+    if len(parts) >= 3:
+        key = parts[1]
+        try:
+            delta = int(parts[2].replace("+", ""))
+        except Exception:
+            await call.answer("Помилка", show_alert=True)
+            return
+
+        if key not in s:
+            await call.answer("Невідомий параметр", show_alert=True)
+            return
+
+        newv = int(s.get(key, DEFAULT_SETTINGS.get(key, 0))) + delta
+
+        if key.startswith("t_"):
+            newv = max(5, min(600, newv))
+        if key in ("min_players", "max_players"):
+            newv = max(2, min(30, newv))
+            if key == "min_players":
+                newv = min(newv, int(s.get("max_players", 15)))
+            if key == "max_players":
+                newv = max(newv, int(s.get("min_players", 6)))
+
+        s[key] = newv
+        g.settings = s
+
+        if key in ("min_players", "max_players"):
+            await call.message.edit_reply_markup(reply_markup=kb_settings_rules(s))
+        else:
+            await call.message.edit_reply_markup(reply_markup=kb_settings_timers(s))
+        await call.answer(f"✅ {newv}", show_alert=False)
+        return
+
+    await call.answer()
 
 @dp.message(F.text)
 async def any_text(message: Message):
-    game = get_game(message.chat.id)
-    if blocked_by_pause_for_message(game, message):
+    g = get_game(message.chat.id)
+    if blocked_by_pause_for_message(g, message):
         return
-    if not game.active:
+    if not g.active:
         return
 
-    if game.vote_open:
+    if g.vote_open:
         txt = (message.text or "").strip()
         if not txt.startswith("/"):
             u = message.from_user
-            if u and u.id in game.players and game.players[u.id].alive:
-                game.silent_offenders.add(u.id)
-
+            if u and u.id in g.players and g.players[u.id].alive:
+                g.silent_offenders.add(u.id)
                 try:
                     await message.reply("⚠️ Тиша під час голосування! Штраф у наступному раунді.")
                 except Exception:
                     pass
 
-async def close_vote_internal(chat_id: int, game: Game, forced_by_timer: bool):
-    game.vote_open = False
-    await apply_silence_penalty(game)
+async def close_vote_internal(chat_id: int, g: Game, forced_by_timer: bool):
+    g.vote_open = False
+    await apply_silence_penalty(g)
 
-    alive_count = len(game.alive_ids())
-    counts = count_votes_with_absent_as_self(game)
+    alive_count = len(g.alive_ids())
+    counts = count_votes_with_absent_as_self(g)
     cands, mx = top_candidates(counts)
     mx_pct = percent(mx, alive_count)
 
-    lines = []
-    for pid, c in sorted(counts.items(), key=lambda x: -x[1]):
-        lines.append(f"{game.players[pid].tag()}: {c}")
-    report = "\n".join(lines)
+    report_lines = [f"{g.players[pid].tag()}: {c}" for pid, c in sorted(counts.items(), key=lambda x: -x[1])]
+    report = "\n".join(report_lines)
 
     await bot.send_message(
         chat_id,
@@ -912,88 +1191,61 @@ async def close_vote_internal(chat_id: int, game: Game, forced_by_timer: bool):
     )
 
     if len(cands) == 1 and mx_pct >= 70.0:
-        await eliminate(chat_id, game, [cands[0]], "70%+ голосів — без виправдання.")
+        await eliminate(chat_id, g, [cands[0]], "70%+ голосів — без виправдання.")
         return
 
-    need_justify = [pid for pid in cands if pid not in game.justified_this_round]
-    if need_justify:
-        game.phase = Phase.JUSTIFY
-        game.justify_candidates = need_justify[:]
-        for pid in need_justify:
-            game.justified_this_round.add(pid)
+    await bot.send_message(
+        chat_id,
+        "⚖️ Виправдання (30 сек). Потім переголосування.\n"
+        "Відкрий знову: /openvote"
+    )
 
-        tags = ", ".join(game.players[pid].tag() for pid in need_justify)
-        await bot.send_message(
-            chat_id,
-            "⚖️ ВИПРАВДАННЯ.\n"
-            "Кандидати мають 30 секунд.\n"
-            "⚠️ Заборонено розкривати характеристики!\n\n"
-            f"Кандидати: {tags}\n\n"
-            "Після виправдань — /openvote (переголосування)"
-        )
-        return
-
-    if len(cands) >= 2:
-        if game.round_no == 1:
-            await bot.send_message(chat_id, "⚠️ Рівність у 1 раунді — можна без вильоту. Йдемо далі.")
-            await advance_round(chat_id, game)
-            return
-        await eliminate(chat_id, game, cands, "Рівність у 2–7 раунді — вилітають всі з максимумом.")
-        return
-
-    if len(cands) == 1:
-        await eliminate(chat_id, game, [cands[0]], "Після виправдання — виліт за максимумом.")
-        return
-
-async def eliminate(chat_id: int, game: Game, kicked_ids: List[int], reason: str):
+async def eliminate(chat_id: int, g: Game, kicked_ids: List[int], reason: str):
     for kid in kicked_ids:
-        if kid in game.players:
-            game.players[kid].alive = False
+        if kid in g.players:
+            g.players[kid].alive = False
 
-    tags = ", ".join(game.players[k].tag() for k in kicked_ids if k in game.players)
-
+    tags = ", ".join(g.players[k].tag() for k in kicked_ids if k in g.players)
     await bot.send_message(
         chat_id,
         "🚪 Двері бункера скриплять…\n"
         f"Причина: {reason}\n\n"
-        f"❌ Вигнано: {tags}\n\n"
-        "🕯 Прощальна промова: 15 секунд."
+        f"❌ Вигнано: {tags}\n"
     )
 
-    if game.need_finish():
-        game.phase = Phase.FINISH
-        await bot.send_message(chat_id, f"🏁 ФІНАЛ.\nПереможці:\n{game.roster_text(True)}")
-        game.active = False
+    g.last_elim_id = kicked_ids[0] if kicked_ids else None
+    if g.last_elim_id is not None:
+        default_show = bool(g.settings.get("show_cards_on_elim_default", False))
+        if default_show:
+            await bot.send_message(chat_id, full_cards_text(g, g.last_elim_id))
+        else:
+            await bot.send_message(
+                chat_id,
+                "🔎 Показати повний набір карток вигнаного гравця?",
+                reply_markup=kb_reveal_elim(g.last_elim_id)
+            )
+
+    if g.need_finish():
+        g.phase = Phase.FINISH
+        await bot.send_message(chat_id, f"🏁 ФІНАЛ.\nПереможці:\n{g.roster_text(True)}")
+        g.active = False
         return
 
-    await advance_round(chat_id, game)
-
-async def advance_round(chat_id: int, game: Game):
-    if game.round_no >= MAX_ROUNDS:
-        game.phase = Phase.FINISH
-        await bot.send_message(chat_id, "⚠️ Максимум раундів. Фінал за місцями.")
-        await bot.send_message(chat_id, f"Переможці:\n{game.roster_text(True)}")
-        game.active = False
+    if g.round_no >= MAX_ROUNDS:
+        g.phase = Phase.FINISH
+        await bot.send_message(chat_id, f"🏁 ФІНАЛ.\nПереможці:\n{g.roster_text(True)}")
+        g.active = False
         return
 
-    game.round_no += 1
-    game.clockwise = not game.clockwise
-    game.make_round_order()
+    g.round_no += 1
+    g.clockwise = not g.clockwise
+    g.make_round_order()
+    g.votes.clear()
+    g.silent_offenders.clear()
+    g.justified_this_round.clear()
 
-    game.votes.clear()
-    game.silent_offenders.clear()
-    game.justified_this_round.clear()
-    game.justify_candidates.clear()
-
-    await bot.send_message(
-        chat_id,
-        f"🔁 Раунд {game.round_no}.\n"
-        f"Напрямок: {'за годинниковою' if game.clockwise else 'проти годинникової'}.\n"
-        f"Кожен відкриває у ЛС і озвучує: {game.reveal_plan[game.round_no-1]} характеристик.\n\n"
-        "Починаємо: /next"
-    )
-
-    game.phase = Phase.ROUND_START
+    g.phase = Phase.BRIEFING
+    await start_briefing_timer(chat_id, g)
 
 async def main():
     await dp.start_polling(bot)

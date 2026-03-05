@@ -18,20 +18,20 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
+
 SETTINGS_FILE = Path("settings.json")
 
 DEFAULT_SETTINGS = {
-
     "t_turn": 60,           
-    "t_vote": 15,           
+    "t_vote": 15,         
     "t_register": 120,      
-    "t_warning": 5,       
-    "t_discussion": 60,     
-    "t_briefing": 20,       
+    "t_warning": 5,         
+    "t_discussion": 60,    
+    "t_briefing": 20,      
 
+    
     "anonymous_vote": True,         
     "show_cards_on_elim_default": False,  
-
     "min_players": 6,
     "max_players": 15,
     "slots_mode": "half_floor",     
@@ -59,6 +59,7 @@ def set_chat_settings(chat_id: int, new_settings: dict) -> None:
     all_s = _load_all_settings()
     all_s[str(chat_id)] = new_settings
     _save_all_settings(all_s)
+
 
 MAX_ROUNDS = 7
 
@@ -212,7 +213,7 @@ class Game:
     timer_task: Optional[asyncio.Task] = None
 
     vote_open: bool = False
-    votes: Dict[int, int] = field(default_factory=dict)  # voter -> target
+    votes: Dict[int, int] = field(default_factory=dict)  
     silent_offenders: Set[int] = field(default_factory=set)
 
     cards: Dict[int, Dict[str, str]] = field(default_factory=dict)
@@ -593,7 +594,6 @@ async def post_intro(chat_id: int, g: Game):
         f"👁 Місць у бункері: {g.slots} із {len(g.players)}.\n\n"
         "📩 Картки роздано в ЛС."
     )
-
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     g = get_game(message.chat.id)

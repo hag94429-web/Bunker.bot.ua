@@ -18,15 +18,14 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
-
 SETTINGS_FILE = Path("settings.json")
 
 DEFAULT_SETTINGS = {
 
-    "t_turn": 60,         
-    "t_vote": 15,         
+    "t_turn": 60,           
+    "t_vote": 15,           
     "t_register": 120,      
-    "t_warning": 5,         
+    "t_warning": 5,       
     "t_discussion": 60,     
     "t_briefing": 20,       
 
@@ -35,7 +34,7 @@ DEFAULT_SETTINGS = {
 
     "min_players": 6,
     "max_players": 15,
-    "slots_mode": "half_floor",    
+    "slots_mode": "half_floor",     
 }
 
 def _load_all_settings() -> dict:
@@ -149,7 +148,6 @@ def percent(part: int, whole: int) -> float:
     return 0.0 if whole <= 0 else (part / whole) * 100.0
 
 def bunker_slots(n_players: int, slots_mode: str) -> int:
-
     return n_players // 2
 
 def reveals_per_round(n_players: int) -> List[int]:
@@ -178,7 +176,6 @@ class Phase(str, Enum):
     DISCUSSION = "discussion"
     SPEECHES = "speeches"
     VOTE = "vote"
-    JUSTIFY = "justify"
     FINISH = "finish"
 
 @dataclass
@@ -217,7 +214,6 @@ class Game:
     vote_open: bool = False
     votes: Dict[int, int] = field(default_factory=dict)  # voter -> target
     silent_offenders: Set[int] = field(default_factory=set)
-    justified_this_round: Set[int] = field(default_factory=set)
 
     cards: Dict[int, Dict[str, str]] = field(default_factory=dict)
     revealed_total: Dict[int, int] = field(default_factory=dict)
@@ -251,6 +247,7 @@ class Game:
 
     def need_finish(self) -> bool:
         return len(self.alive_ids()) <= self.slots
+
 
 GAMES: Dict[int, Game] = {}
 
@@ -303,17 +300,16 @@ async def cancel_timer(g: Game):
         g.timer_task.cancel()
     g.timer_task = None
 
-
 def kb_lobby() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="➕ Приєднатись", callback_data="lobby:join")
     kb.adjust(1)
     return kb.as_markup()
 
-def kb_vote(g: Game) -> InlineKeyboardMarkup:
+def kb_vote_private(chat_id: int, g: Game) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for i, p in enumerate(g.alive_players(), start=1):
-        kb.button(text=f"{i}. {p.tag()}", callback_data=f"vote:{p.user_id}")
+        kb.button(text=f"{i}. {p.tag()}", callback_data=f"vote:{chat_id}:{p.user_id}")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -342,11 +338,6 @@ def lobby_text(g: Game) -> str:
         f"Ознайомлення: {s.get('t_briefing', 20)}с | "
         f"Обговорення: {s.get('t_discussion', 60)}с | "
         f"Голосування: {s.get('t_vote', 15)}с\n\n"
-        "Команди:\n"
-        "• /players — список\n"
-        "• /leave — вийти\n"
-        "• /startgame — старт\n"
-        "• /settings — налаштування (OWNER/адмін, тільки коли гри немає)\n"
     )
 
 async def update_lobby(chat_id: int, g: Game):
@@ -364,74 +355,74 @@ async def update_lobby(chat_id: int, g: Game):
     msg = await bot.send_message(chat_id, lobby_text(g), reply_markup=kb_lobby())
     g.lobby_message_id = msg.message_id
 
-def kb_settings_main() -> InlineKeyboardMarkup:
+def kb_settings_main(chat_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="⏱ Таймери", callback_data="set:timers")
-    kb.button(text="📜 Загальні правила", callback_data="set:rules")
-    kb.button(text="✅ Готово (зберегти)", callback_data="set:save")
+    kb.button(text="⏱ Таймери", callback_data=f"set:{chat_id}:timers")
+    kb.button(text="📜 Загальні правила", callback_data=f"set:{chat_id}:rules")
+    kb.button(text="✅ Готово (зберегти)", callback_data=f"set:{chat_id}:save")
     kb.adjust(1)
     return kb.as_markup()
 
-def kb_settings_timers(s: dict) -> InlineKeyboardMarkup:
+def kb_settings_timers(chat_id: int, s: dict) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
 
     kb.button(text=f"🎙 Хід: {s['t_turn']}с", callback_data="noop")
-    kb.button(text="−10", callback_data="set:t_turn:-10")
-    kb.button(text="−5", callback_data="set:t_turn:-5")
-    kb.button(text="+5", callback_data="set:t_turn:+5")
-    kb.button(text="+10", callback_data="set:t_turn:+10")
+    kb.button(text="−10", callback_data=f"set:{chat_id}:t_turn:-10")
+    kb.button(text="−5", callback_data=f"set:{chat_id}:t_turn:-5")
+    kb.button(text="+5", callback_data=f"set:{chat_id}:t_turn:+5")
+    kb.button(text="+10", callback_data=f"set:{chat_id}:t_turn:+10")
 
     kb.button(text=f"🗳 Голосування: {s['t_vote']}с", callback_data="noop")
-    kb.button(text="−10", callback_data="set:t_vote:-10")
-    kb.button(text="−5", callback_data="set:t_vote:-5")
-    kb.button(text="+5", callback_data="set:t_vote:+5")
-    kb.button(text="+10", callback_data="set:t_vote:+10")
+    kb.button(text="−10", callback_data=f"set:{chat_id}:t_vote:-10")
+    kb.button(text="−5", callback_data=f"set:{chat_id}:t_vote:-5")
+    kb.button(text="+5", callback_data=f"set:{chat_id}:t_vote:+5")
+    kb.button(text="+10", callback_data=f"set:{chat_id}:t_vote:+10")
 
     kb.button(text=f"🧩 Реєстрація: {s['t_register']}с", callback_data="noop")
-    kb.button(text="−30", callback_data="set:t_register:-30")
-    kb.button(text="−10", callback_data="set:t_register:-10")
-    kb.button(text="+10", callback_data="set:t_register:+10")
-    kb.button(text="+30", callback_data="set:t_register:+30")
+    kb.button(text="−30", callback_data=f"set:{chat_id}:t_register:-30")
+    kb.button(text="−10", callback_data=f"set:{chat_id}:t_register:-10")
+    kb.button(text="+10", callback_data=f"set:{chat_id}:t_register:+10")
+    kb.button(text="+30", callback_data=f"set:{chat_id}:t_register:+30")
 
     kb.button(text=f"⚠️ Попередження: {s['t_warning']}с", callback_data="noop")
-    kb.button(text="−2", callback_data="set:t_warning:-2")
-    kb.button(text="−1", callback_data="set:t_warning:-1")
-    kb.button(text="+1", callback_data="set:t_warning:+1")
-    kb.button(text="+2", callback_data="set:t_warning:+2")
+    kb.button(text="−2", callback_data=f"set:{chat_id}:t_warning:-2")
+    kb.button(text="−1", callback_data=f"set:{chat_id}:t_warning:-1")
+    kb.button(text="+1", callback_data=f"set:{chat_id}:t_warning:+1")
+    kb.button(text="+2", callback_data=f"set:{chat_id}:t_warning:+2")
 
     kb.button(text=f"💬 Обговорення: {s['t_discussion']}с", callback_data="noop")
-    kb.button(text="−10", callback_data="set:t_discussion:-10")
-    kb.button(text="−5", callback_data="set:t_discussion:-5")
-    kb.button(text="+5", callback_data="set:t_discussion:+5")
-    kb.button(text="+10", callback_data="set:t_discussion:+10")
+    kb.button(text="−10", callback_data=f"set:{chat_id}:t_discussion:-10")
+    kb.button(text="−5", callback_data=f"set:{chat_id}:t_discussion:-5")
+    kb.button(text="+5", callback_data=f"set:{chat_id}:t_discussion:+5")
+    kb.button(text="+10", callback_data=f"set:{chat_id}:t_discussion:+10")
 
     kb.button(text=f"👀 Ознайомлення: {s['t_briefing']}с", callback_data="noop")
-    kb.button(text="−10", callback_data="set:t_briefing:-10")
-    kb.button(text="−5", callback_data="set:t_briefing:-5")
-    kb.button(text="+5", callback_data="set:t_briefing:+5")
-    kb.button(text="+10", callback_data="set:t_briefing:+10")
+    kb.button(text="−10", callback_data=f"set:{chat_id}:t_briefing:-10")
+    kb.button(text="−5", callback_data=f"set:{chat_id}:t_briefing:-5")
+    kb.button(text="+5", callback_data=f"set:{chat_id}:t_briefing:+5")
+    kb.button(text="+10", callback_data=f"set:{chat_id}:t_briefing:+10")
 
-    kb.button(text="⬅️ Назад", callback_data="set:back")
+    kb.button(text="⬅️ Назад", callback_data=f"set:{chat_id}:back")
     kb.adjust(1, 4, 1, 4, 1, 4, 1, 4, 1, 4, 1, 4, 1)
     return kb.as_markup()
 
-def kb_settings_rules(s: dict) -> InlineKeyboardMarkup:
+def kb_settings_rules(chat_id: int, s: dict) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     av = "Так" if s.get("anonymous_vote", True) else "Ні"
     sc = "Так" if s.get("show_cards_on_elim_default", False) else "Ні"
 
-    kb.button(text=f"🕶 Анонімність голосу: {av}", callback_data="set:toggle:anonymous_vote")
-    kb.button(text=f"🃏 Картки після вильоту (дефолт): {sc}", callback_data="set:toggle:show_cards_on_elim_default")
+    kb.button(text=f"🕶 Анонімність голосу: {av}", callback_data=f"set:{chat_id}:toggle:anonymous_vote")
+    kb.button(text=f"🃏 Картки після вильоту (дефолт): {sc}", callback_data=f"set:{chat_id}:toggle:show_cards_on_elim_default")
 
     kb.button(text=f"👥 Мін гравців: {s.get('min_players', 6)}", callback_data="noop")
-    kb.button(text="−1", callback_data="set:min_players:-1")
-    kb.button(text="+1", callback_data="set:min_players:+1")
+    kb.button(text="−1", callback_data=f"set:{chat_id}:min_players:-1")
+    kb.button(text="+1", callback_data=f"set:{chat_id}:min_players:+1")
 
     kb.button(text=f"👥 Макс гравців: {s.get('max_players', 15)}", callback_data="noop")
-    kb.button(text="−1", callback_data="set:max_players:-1")
-    kb.button(text="+1", callback_data="set:max_players:+1")
+    kb.button(text="−1", callback_data=f"set:{chat_id}:max_players:-1")
+    kb.button(text="+1", callback_data=f"set:{chat_id}:max_players:+1")
 
-    kb.button(text="⬅️ Назад", callback_data="set:back")
+    kb.button(text="⬅️ Назад", callback_data=f"set:{chat_id}:back")
     kb.adjust(1, 1, 1, 2, 1, 2, 1)
     return kb.as_markup()
 
@@ -439,10 +430,11 @@ RULES_TEXT = (
     "📜 Загальні правила (коротко)\n\n"
     "• Картки гравцям надсилаються в приват, відкриття кнопкою.\n"
     "• Після презентацій — авто-обговорення за таймером.\n"
-    "• Голосування: авто-таймер, хто не проголосував — голос проти себе.\n"
+    "• Голосування: в ПП кнопками, авто-таймер.\n"
+    "• Хто не проголосував — голос проти себе.\n"
     "• 70%+ за одного — виліт без виправдання.\n"
     "• Інакше — виправдання і переголосування.\n"
-    "• Після вильоту можна (за рішенням OWNER/адмінів) показати повний набір карток.\n"
+    "• Після вильоту можна показати повний набір карток (за рішенням OWNER/адмінів).\n"
 )
 
 async def ensure_dm_open(user_id: int) -> bool:
@@ -479,7 +471,7 @@ def next_unrevealed(g: Game, user_id: int) -> Optional[Tuple[str, str]]:
 
 def full_cards_text(g: Game, user_id: int) -> str:
     cards = g.cards.get(user_id, {})
-    if not cards:
+    if not cards or user_id not in g.players:
         return "🃏 Картки відсутні."
     lines = [f"🃏 Повний набір карток: {g.players[user_id].tag()}"]
     for title, key in CARD_KEYS_ORDER:
@@ -620,9 +612,9 @@ async def cmd_start(message: Message):
         "• /leave — вийти\n"
         "• /startgame — старт\n"
         "• /next — наступний етап\n"
-        "• /openvote — голосування\n"
+        "• /openvote — голосування (кнопки в ПП)\n"
         "• /closevote — закрити голосування\n"
-        "• /settings — налаштування (OWNER/адмін, тільки коли гри немає)\n"
+        "• /settings — налаштування (OWNER/адмін → меню в ПП)\n"
         "• /pause, /resume (OWNER)\n"
         "• /end — завершити\n"
     )
@@ -684,9 +676,11 @@ async def cmd_settings(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
     if message.chat.type == "private":
-        await message.answer("⚙️ Налаштування доступні тільки в групі.")
+        await message.answer("⚙️ Відкрий /settings у групі, і я надішлю меню в ПП.")
         return
+
     if g.active:
         await message.answer("⛔ Налаштування можна змінювати тільки коли гри немає.\nЗаверши гру командою /end.")
         return
@@ -699,7 +693,16 @@ async def cmd_settings(message: Message):
         return
 
     g.settings = get_chat_settings(message.chat.id)
-    await message.answer("⚙️ Налаштування", reply_markup=kb_settings_main())
+
+    try:
+        await bot.send_message(
+            uid,
+            f"⚙️ Налаштування для чату: {message.chat.title or message.chat.id}",
+            reply_markup=kb_settings_main(message.chat.id),
+        )
+        await message.answer("✅ Меню налаштувань надіслав(ла) тобі в ПП.")
+    except Exception:
+        await message.answer("⚠️ Не можу написати в ПП. Відкрий бота в приваті: /start і повтори /settings.")
 
 @dp.message(Command("pause"))
 async def cmd_pause(message: Message):
@@ -801,7 +804,6 @@ async def cmd_startgame(message: Message):
 
     g.votes.clear()
     g.silent_offenders.clear()
-    g.justified_this_round.clear()
     g.vote_open = False
 
     g.make_round_order()
@@ -843,7 +845,6 @@ async def cmd_next(message: Message):
         return
 
     if g.phase == Phase.DISCUSSION:
-
         await cancel_timer(g)
         g.phase = Phase.SPEECHES
         await bot.send_message(
@@ -891,10 +892,27 @@ async def cmd_openvote(message: Message):
     await bot.send_message(
         message.chat.id,
         f"🗳 ГОЛОСУВАННЯ ({sec} сек, авто).\n"
-        "Тиша! Будь-які повідомлення = штраф.\n"
-        "Натисни кнопку 👇",
-        reply_markup=kb_vote(g)
+        "Голосуємо в ПП (бот надіслав кнопки кожному).\n"
+        "У чаті — тиша."
     )
+
+    failed = []
+    for pid in g.alive_ids():
+        try:
+            await bot.send_message(
+                pid,
+                f"🗳 Голосування у чаті: {message.chat.title or message.chat.id}\n"
+                f"Час: {sec} сек.\n"
+                f"Обери, за кого голосуєш 👇",
+                reply_markup=kb_vote_private(message.chat.id, g)
+            )
+        except Exception:
+            failed.append(pid)
+
+    if failed:
+        tags = ", ".join(g.players[x].tag() for x in failed if x in g.players)
+        await bot.send_message(message.chat.id, f"⚠️ Не можу написати в ПП: {tags}\nНехай відкриють бота в приваті: /start")
+
     await start_vote_timer(message.chat.id, g)
 
 @dp.message(Command("closevote"))
@@ -994,7 +1012,15 @@ async def cb_dm_reveal(call: CallbackQuery):
 async def cb_vote(call: CallbackQuery):
     if call.message is None:
         return
-    g = get_game(call.message.chat.id)
+
+    parts = call.data.split(":")  
+    if len(parts) < 3:
+        await call.answer("Помилка голосу.", show_alert=True)
+        return
+
+    chat_id = int(parts[1])
+    target_id = int(parts[2])
+    g = get_game(chat_id)
 
     if blocked_by_pause_for_callback(g, call):
         await call.answer("Пауза.", show_alert=False)
@@ -1008,12 +1034,6 @@ async def cb_vote(call: CallbackQuery):
         await call.answer("Голосують лише живі гравці.", show_alert=True)
         return
 
-    try:
-        target_id = int(call.data.split(":")[1])
-    except Exception:
-        await call.answer("Помилка голосу.", show_alert=True)
-        return
-
     if target_id not in g.players or not g.players[target_id].alive:
         await call.answer("Цей гравець вже не в грі.", show_alert=True)
         return
@@ -1023,7 +1043,12 @@ async def cb_vote(call: CallbackQuery):
 
     g.votes[voter_id] = target_id
     target_tag = g.players[target_id].tag()
-    await call.answer(f"✅ Ти проголосував за {target_tag}", show_alert=False)
+
+    await call.answer("✅ Зараховано", show_alert=False)
+    try:
+        await call.message.answer(f"✅ Ти проголосував за {target_tag}")
+    except Exception:
+        pass
 
 @dp.callback_query(F.data.startswith("elimreveal:"))
 async def cb_elimreveal(call: CallbackQuery):
@@ -1041,7 +1066,7 @@ async def cb_elimreveal(call: CallbackQuery):
         await call.answer("⛔ Тільки OWNER або адмін чату", show_alert=True)
         return
 
-    parts = call.data.split(":")  
+    parts = call.data.split(":")
     action = parts[1]
     target_id = int(parts[2])
 
@@ -1062,7 +1087,16 @@ async def cb_elimreveal(call: CallbackQuery):
 async def cb_settings(call: CallbackQuery):
     if call.message is None:
         return
-    chat_id = call.message.chat.id
+
+    parts = call.data.split(":")
+
+    if len(parts) < 3:
+        await call.answer("Помилка", show_alert=True)
+        return
+
+    chat_id = int(parts[1])
+    action = parts[2]
+
     g = get_game(chat_id)
 
     if blocked_by_pause_for_callback(g, call):
@@ -1080,21 +1114,18 @@ async def cb_settings(call: CallbackQuery):
 
     s = g.settings if g.settings else get_chat_settings(chat_id)
 
-    parts = call.data.split(":")
-    action = parts[1]
-
     if action == "timers":
-        await call.message.edit_text("⏱ Таймери", reply_markup=kb_settings_timers(s))
+        await call.message.edit_text("⏱ Таймери", reply_markup=kb_settings_timers(chat_id, s))
         await call.answer()
         return
 
     if action == "rules":
-        await call.message.edit_text(RULES_TEXT, reply_markup=kb_settings_rules(s))
+        await call.message.edit_text(RULES_TEXT, reply_markup=kb_settings_rules(chat_id, s))
         await call.answer()
         return
 
     if action == "back":
-        await call.message.edit_text("⚙️ Налаштування", reply_markup=kb_settings_main())
+        await call.message.edit_text("⚙️ Налаштування", reply_markup=kb_settings_main(chat_id))
         await call.answer()
         return
 
@@ -1102,24 +1133,24 @@ async def cb_settings(call: CallbackQuery):
         set_chat_settings(chat_id, s)
         g.settings = s
         await call.answer("✅ Збережено!", show_alert=False)
-        await call.message.edit_text("✅ Налаштування збережені.", reply_markup=kb_settings_main())
+        await call.message.edit_text("✅ Налаштування збережені.", reply_markup=kb_settings_main(chat_id))
         return
 
-    if action == "toggle" and len(parts) >= 3:
-        key = parts[2]
+    if action == "toggle" and len(parts) >= 4:
+        key = parts[3]
         if key == "anonymous_vote":
             s["anonymous_vote"] = not bool(s.get("anonymous_vote", True))
         elif key == "show_cards_on_elim_default":
             s["show_cards_on_elim_default"] = not bool(s.get("show_cards_on_elim_default", False))
         g.settings = s
-        await call.message.edit_reply_markup(reply_markup=kb_settings_rules(s))
+        await call.message.edit_reply_markup(reply_markup=kb_settings_rules(chat_id, s))
         await call.answer("✅")
         return
 
-    if len(parts) >= 3:
-        key = parts[1]
+    if len(parts) >= 5:
+        key = parts[3]
         try:
-            delta = int(parts[2].replace("+", ""))
+            delta = int(parts[4].replace("+", ""))
         except Exception:
             await call.answer("Помилка", show_alert=True)
             return
@@ -1143,9 +1174,9 @@ async def cb_settings(call: CallbackQuery):
         g.settings = s
 
         if key in ("min_players", "max_players"):
-            await call.message.edit_reply_markup(reply_markup=kb_settings_rules(s))
+            await call.message.edit_reply_markup(reply_markup=kb_settings_rules(chat_id, s))
         else:
-            await call.message.edit_reply_markup(reply_markup=kb_settings_timers(s))
+            await call.message.edit_reply_markup(reply_markup=kb_settings_timers(chat_id, s))
         await call.answer(f"✅ {newv}", show_alert=False)
         return
 
@@ -1157,6 +1188,9 @@ async def any_text(message: Message):
     if blocked_by_pause_for_message(g, message):
         return
     if not g.active:
+        return
+
+    if message.chat.type == "private":
         return
 
     if g.vote_open:
@@ -1225,13 +1259,7 @@ async def eliminate(chat_id: int, g: Game, kicked_ids: List[int], reason: str):
                 reply_markup=kb_reveal_elim(g.last_elim_id)
             )
 
-    if g.need_finish():
-        g.phase = Phase.FINISH
-        await bot.send_message(chat_id, f"🏁 ФІНАЛ.\nПереможці:\n{g.roster_text(True)}")
-        g.active = False
-        return
-
-    if g.round_no >= MAX_ROUNDS:
+    if g.need_finish() or g.round_no >= MAX_ROUNDS:
         g.phase = Phase.FINISH
         await bot.send_message(chat_id, f"🏁 ФІНАЛ.\nПереможці:\n{g.roster_text(True)}")
         g.active = False
@@ -1242,7 +1270,6 @@ async def eliminate(chat_id: int, g: Game, kicked_ids: List[int], reason: str):
     g.make_round_order()
     g.votes.clear()
     g.silent_offenders.clear()
-    g.justified_this_round.clear()
 
     g.phase = Phase.BRIEFING
     await start_briefing_timer(chat_id, g)

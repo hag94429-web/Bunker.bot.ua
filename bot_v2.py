@@ -214,7 +214,7 @@ def get_chat_settings(chat_id: int) -> dict:
     s = all_s.get(str(chat_id), {})
     merged = DEFAULT_SETTINGS.copy()
     merged.update(s)
-    return merged
+    return merge
 
 def set_chat_settings(chat_id: int, new_settings: dict) -> None:
     all_s = _load_all_settings()
@@ -295,6 +295,40 @@ def add_game(user_id: int) -> dict:
     user["games"] = int(user.get("games", 0)) + 1
     update_user(user_id, user)
     return user
+
+def build_stats_text() -> str:
+    users = load_users()
+
+    if not users:
+        return (
+            "📊 Статистика бота\n\n"
+            "👥 Усього користувачів: 0\n"
+            "🎮 Грали хоча б раз: 0\n"
+            "🕹 Усього ігор: 0\n"
+            "🏆 Усього перемог: 0\n"
+            "💰 Монет у системі: 0\n"
+            "⭐ XP у системі: 0\n"
+            "🧬 Куплених Spec: 0"
+        )
+
+    total_users = len(users)
+    played_users = sum(1 for u in users.values() if int(u.get("games", 0)) > 0)
+    total_games = sum(int(u.get("games", 0)) for u in users.values())
+    total_wins = sum(int(u.get("wins", 0)) for u in users.values())
+    total_money = sum(int(u.get("money", 0)) for u in users.values())
+    total_xp = sum(int(u.get("xp", 0)) for u in users.values())
+    total_specs = sum(len(u.get("spec", [])) for u in users.values())
+
+    return (
+        "📊 Статистика бота\n\n"
+        f"👥 Усього користувачів: {total_users}\n"
+        f"🎮 Грали хоча б раз: {played_users}\n"
+        f"🕹 Усього ігор: {total_games}\n"
+        f"🏆 Усього перемог: {total_wins}\n"
+        f"💰 Монет у системі: {total_money}\n"
+        f"⭐ XP у системі: {total_xp}\n"
+        f"🧬 Куплених Spec: {total_specs}"
+    )
 
 def random_card() -> Dict[str, str]:
     return {
@@ -1213,6 +1247,7 @@ async def cmd_start(message: Message):
         "• /spec — мої Spec\n"
         "• /daily — щоденний бонус\n"
         "• /top — топ гравців\n"
+        "• /stats — статистика бота\n"
         "• /next — форс наступного етапу\n"
         "• /openvote — форс відкрити голосування\n"
         "• /closevote — форс закрити голосування\n"
@@ -1326,6 +1361,16 @@ async def cmd_daily(message: Message):
 @dp.message(Command("top"))
 async def cmd_top(message: Message):
     await message.answer(build_top_text())
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    user_id = message.from_user.id if message.from_user else None
+
+    if not is_owner(user_id):
+        await message.answer("⛔ Тільки для OWNER")
+        return
+
+    await message.answer(build_stats_text())
 
 @dp.message(Command("settings"))
 async def cmd_settings(message: Message):

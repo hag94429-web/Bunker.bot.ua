@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 import random
 from pathlib import Path
@@ -20,6 +21,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
 SETTINGS_FILE = Path("settings.json")
+USERS_FILE = Path("users.json")
 
 DEFAULT_SETTINGS = {
     "t_turn": 60,
@@ -41,6 +43,23 @@ DEFAULT_SETTINGS = {
 
     "penalty_for_silence": True,
     "penalty_for_talk_during_vote": True,
+}
+
+DEFAULT_USER = {
+    "money": 100,
+    "xp": 0,
+    "level": 1,
+    "wins": 0,
+    "games": 0,
+    "spec": [],
+    "daily_ts": 0,
+}
+
+SHOP = {
+    "double_vote": 50,
+    "cancel_vote": 40,
+    "shield": 70,
+    "revote": 60,
 }
 
 MAX_ROUNDS = 7
@@ -195,6 +214,81 @@ def set_chat_settings(chat_id: int, new_settings: dict) -> None:
     all_s[str(chat_id)] = new_settings
     _save_all_settings(all_s)
 
+def load_users() -> dict:
+    if USERS_FILE.exists():
+        try:
+            return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+def save_users(data: dict) -> None:
+    USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def calc_level(xp: int) -> int:
+    level = 1
+    while xp >= level * 100:
+        level += 1
+    return level
+
+def get_user(user_id: int) -> dict:
+    users = load_users()
+    uid = str(user_id)
+
+    if uid not in users:
+        users[uid] = {
+            "money": 100,
+            "xp": 0,
+            "level": 1,
+            "wins": 0,
+            "games": 0,
+            "spec": [],
+            "daily_ts": 0,
+        }
+        save_users(users)
+
+    user = users[uid]
+
+    for k, v in DEFAULT_USER.items():
+        if k not in user:
+            user[k] = v if not isinstance(v, list) else []
+
+    user["level"] = calc_level(int(user.get("xp", 0)))
+    users[uid] = user
+    save_users(users)
+    return user
+
+def update_user(user_id: int, user_data: dict) -> None:
+    users = load_users()
+    user_data["level"] = calc_level(int(user_data.get("xp", 0)))
+    users[str(user_id)] = user_data
+    save_users(users)
+
+def add_money(user_id: int, amount: int) -> dict:
+    user = get_user(user_id)
+    user["money"] = max(0, int(user.get("money", 0)) + amount)
+    update_user(user_id, user)
+    return user
+
+def add_xp(user_id: int, amount: int) -> dict:
+    user = get_user(user_id)
+    user["xp"] = max(0, int(user.get("xp", 0)) + amount)
+    user["level"] = calc_level(user["xp"])
+    update_user(user_id, user)
+    return user
+
+def add_win(user_id: int) -> dict:
+    user = get_user(user_id)
+    user["wins"] = int(user.get("wins", 0)) + 1
+    update_user(user_id, user)
+    return user
+
+def add_game(user_id: int) -> dict:
+    user = get_user(user_id)
+    user["games"] = int(user.get("games", 0)) + 1
+    update_user(user_id, user)
+    return user
+
 def random_card() -> Dict[str, str]:
     return {
         "profession": random.choice(PROF),
@@ -248,6 +342,55 @@ def reveals_per_round(n_players: int) -> List[int]:
         return base[:MAX_ROUNDS]
     base = [3, 2, 1] + [1] * (MAX_ROUNDS - 3)
     return base[:MAX_ROUNDS]
+
+def profile_text(user_id: int, tg_name: str) -> str:
+    user = get_user(user_id)
+    xp = int(user["xp"])
+    level = int(user["level"])
+    need = level * 100
+    return (
+        f"👤 Профіль: {tg_name}\n\n"
+        f"💰 Монети: {user['money']}\n"
+        f"⭐ XP: {xp}/{need}\n"
+        f"📈 Рівень: {level}\n"
+        f"🏆 Перемог: {user['wins']}\n"
+        f"🎮 Ігор: {user['games']}\n"
+        f"🧬 Spec: {len(user['spec'])}"
+    )
+
+def shop_text(user_id: int) -> str:
+    user = get_user(user_id)
+    lines = [f"🏪 Магазин\n\n💰 Баланс: {user['money']}\n"]
+    for key, price in SHOP.items():
+        lines.append(f"• {key} — {price}💰")
+    return "\n".join(lines)
+
+def spec_text(user_id: int) -> str:
+    user = get_user(user_id)
+    if not user["spec"]:
+        return "🧬 Твої Spec:\n\nПоки що порожньо."
+    return "🧬 Твої Spec:\n\n" + "\n".join(f"{i + 1}. {item}" for i, item in enumerate(user["spec"]))
+
+def build_top_text() -> str:
+    users = load_users()
+    if not users:
+        return "🏆 Топ поки порожній."
+
+    rating = []
+    for uid, data in users.items():
+        rating.append((
+            int(uid),
+            int(data.get("wins", 0)),
+            int(data.get("level", calc_level(int(data.get("xp", 0))))),
+            int(data.get("money", 0)),
+        ))
+
+    rating.sort(key=lambda x: (-x[1], -x[2], -x[3]))
+
+    lines = ["🏆 Топ гравців\n"]
+    for i, (uid, wins, level, money) in enumerate(rating[:10], start=1):
+        lines.append(f"{i}. ID {uid} — 🏆 {wins} | 📈 {level} | 💰 {money}")
+    return "\n".join(lines)
 
 class Phase(str, Enum):
     LOBBY = "lobby"
@@ -509,6 +652,34 @@ def kb_settings_rules(s: dict) -> InlineKeyboardMarkup:
     kb.adjust(1, 1, 1, 1, 1, 2, 1, 2, 1)
     return kb.as_markup()
 
+def kb_profile() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🧬 Spec", callback_data="eco:spec")
+    kb.button(text="🏪 Магазин", callback_data="eco:shop")
+    kb.button(text="🏆 Топ", callback_data="eco:top")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def kb_shop() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for key, price in SHOP.items():
+        kb.button(text=f"{key} — {price}💰", callback_data=f"shop:buy:{key}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def kb_spec(user_id: int) -> InlineKeyboardMarkup:
+    user = get_user(user_id)
+    kb = InlineKeyboardBuilder()
+
+    if user.get("spec"):
+        for i, item in enumerate(user["spec"]):
+            kb.button(text=f"Використати {item}", callback_data=f"spec:use:{i}")
+    else:
+        kb.button(text="Немає Spec", callback_data="noop")
+
+    kb.adjust(1)
+    return kb.as_markup()
+
 def lobby_text(g: Game) -> str:
     s = g.settings
     return (
@@ -643,6 +814,17 @@ async def refresh_all_dm_menus(chat_id: int, g: Game):
             )
         except Exception:
             pass
+
+async def reward_all_players_for_game(g: Game):
+    for pid in g.players.keys():
+        add_game(pid)
+        add_xp(pid, 20)
+
+async def reward_winners(g: Game):
+    for pid in g.alive_ids():
+        add_win(pid)
+        add_xp(pid, 50)
+        add_money(pid, 50)
 
 async def start_round_flow(chat_id: int, g: Game):
     if not g.active or g.paused:
@@ -951,7 +1133,16 @@ async def eliminate(chat_id: int, g: Game, kicked_ids: List[int], reason: str):
 
     if g.need_finish() or g.round_no >= MAX_ROUNDS:
         g.phase = Phase.FINISH
-        await bot.send_message(chat_id, f"🏁 ФІНАЛ.\nПереможці:\n{g.roster_text(True)}")
+        await reward_all_players_for_game(g)
+        await reward_winners(g)
+        await bot.send_message(
+            chat_id,
+            f"🏁 ФІНАЛ.\nПереможці:\n{g.roster_text(True)}\n\n"
+            "🎁 Нагороди:\n"
+            "• +20 XP за гру всім учасникам\n"
+            "• +50 XP за перемогу\n"
+            "• +50💰 за перемогу"
+        )
         g.active = False
         return
 
@@ -975,7 +1166,6 @@ async def eliminate(chat_id: int, g: Game, kicked_ids: List[int], reason: str):
     g.talk_vote_penalties.clear()
 
     await start_round_flow(chat_id, g)
-
 
 async def post_intro(chat_id: int, g: Game):
     await bot.send_message(
@@ -1005,6 +1195,11 @@ async def cmd_start(message: Message):
         "• /leave — вийти з лобі\n"
         "• /startgame — старт гри\n"
         "• /status — стан гри\n"
+        "• /profile — профіль\n"
+        "• /shop — магазин\n"
+        "• /spec — мої Spec\n"
+        "• /daily — щоденний бонус\n"
+        "• /top — топ гравців\n"
         "• /next — форс наступного етапу\n"
         "• /openvote — форс відкрити голосування\n"
         "• /closevote — форс закрити голосування\n"
@@ -1065,6 +1260,59 @@ async def cmd_leave(message: Message):
     del g.players[u.id]
     await message.answer(f"❌ {tag} вийшов. Гравців: {len(g.players)}")
     await update_lobby(message.chat.id, g)
+
+@dp.message(Command("profile"))
+async def cmd_profile(message: Message):
+    u = message.from_user
+    if not u:
+        return
+    get_user(u.id)
+    await message.answer(profile_text(u.id, u.full_name), reply_markup=kb_profile())
+
+@dp.message(Command("shop"))
+async def cmd_shop(message: Message):
+    u = message.from_user
+    if not u:
+        return
+    get_user(u.id)
+    await message.answer(shop_text(u.id), reply_markup=kb_shop())
+
+@dp.message(Command("spec"))
+async def cmd_spec(message: Message):
+    u = message.from_user
+    if not u:
+        return
+    get_user(u.id)
+    await message.answer(spec_text(u.id), reply_markup=kb_spec(u.id))
+
+@dp.message(Command("daily"))
+async def cmd_daily(message: Message):
+    u = message.from_user
+    if not u:
+        return
+
+    user = get_user(u.id)
+    now_ts = int(time.time())
+
+    last_ts = int(user.get("daily_ts", 0))
+    cooldown = 60 * 60 * 24
+
+    if now_ts - last_ts < cooldown:
+        left = cooldown - (now_ts - last_ts)
+        hours = left // 3600
+        mins = (left % 3600) // 60
+        await message.answer(f"⏳ Daily уже забрано.\nСпробуй через {hours}г {mins}хв.")
+        return
+
+    user["daily_ts"] = now_ts
+    user["money"] = int(user.get("money", 0)) + 25
+    update_user(u.id, user)
+
+    await message.answer("🎁 Daily бонус: +25💰")
+
+@dp.message(Command("top"))
+async def cmd_top(message: Message):
+    await message.answer(build_top_text())
 
 @dp.message(Command("settings"))
 async def cmd_settings(message: Message):
@@ -1195,6 +1443,7 @@ async def cmd_startgame(message: Message):
 
     for p in g.players.values():
         p.alive = True
+        get_user(p.user_id)
 
     g.votes.clear()
     g.silent_offenders.clear()
@@ -1215,7 +1464,6 @@ async def cmd_startgame(message: Message):
     await post_intro(message.chat.id, g)
     await deal_cards(message.chat.id, g)
     await start_round_flow(message.chat.id, g)
-
 
 @dp.message(Command("next"))
 async def cmd_next(message: Message):
@@ -1302,6 +1550,84 @@ async def cmd_closevote(message: Message):
 async def cb_noop(call: CallbackQuery):
     await call.answer()
 
+@dp.callback_query(F.data == "eco:shop")
+async def cb_eco_shop(call: CallbackQuery):
+    uid = call.from_user.id
+    get_user(uid)
+    if call.message:
+        await call.message.edit_text(shop_text(uid), reply_markup=kb_shop())
+    await call.answer()
+
+@dp.callback_query(F.data == "eco:spec")
+async def cb_eco_spec(call: CallbackQuery):
+    uid = call.from_user.id
+    get_user(uid)
+    if call.message:
+        await call.message.edit_text(spec_text(uid), reply_markup=kb_spec(uid))
+    await call.answer()
+
+@dp.callback_query(F.data == "eco:top")
+async def cb_eco_top(call: CallbackQuery):
+    if call.message:
+        await call.message.edit_text(build_top_text())
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("shop:buy:"))
+async def cb_shop_buy(call: CallbackQuery):
+    uid = call.from_user.id
+    spec_name = call.data.split(":")[2]
+
+    if spec_name not in SHOP:
+        await call.answer("Невідомий товар", show_alert=True)
+        return
+
+    user = get_user(uid)
+    price = SHOP[spec_name]
+
+    if int(user["money"]) < price:
+        await call.answer("Недостатньо монет 💸", show_alert=True)
+        return
+
+    user["money"] -= price
+    user["spec"].append(spec_name)
+    update_user(uid, user)
+
+    if call.message:
+        await call.message.edit_text(
+            f"✅ Куплено: {spec_name}\n\n" + shop_text(uid),
+            reply_markup=kb_shop()
+        )
+
+    await call.answer("Покупка успішна ✅")
+
+@dp.callback_query(F.data.startswith("spec:use:"))
+async def cb_spec_use(call: CallbackQuery):
+    uid = call.from_user.id
+    try:
+        idx = int(call.data.split(":")[2])
+    except Exception:
+        await call.answer("Помилка", show_alert=True)
+        return
+
+    user = get_user(uid)
+    specs = user.get("spec", [])
+
+    if idx < 0 or idx >= len(specs):
+        await call.answer("Spec не знайдено", show_alert=True)
+        return
+
+    used_item = specs.pop(idx)
+    user["spec"] = specs
+    update_user(uid, user)
+
+    if call.message:
+        await call.message.edit_text(
+            f"🧬 Використано: {used_item}\n\n" + spec_text(uid),
+            reply_markup=kb_spec(uid)
+        )
+
+    await call.answer(f"Використано {used_item} ✅")
+
 @dp.callback_query(F.data == "lobby:join")
 async def cb_join(call: CallbackQuery):
     if call.message is None:
@@ -1335,6 +1661,7 @@ async def cb_join(call: CallbackQuery):
         return
 
     g.players[u.id] = Player(user_id=u.id, name=u.full_name, username=(u.username or ""))
+    get_user(u.id)
     await call.answer("✅ Додано", show_alert=False)
     await update_lobby(call.message.chat.id, g)
 
@@ -1407,11 +1734,7 @@ async def cb_reveal_pick(call: CallbackQuery):
     except Exception:
         pass
 
-    await bot.send_message(
-        chat_id,
-        f"🃏 {tag} відкриває характеристику:\n"
-        f"• {title}: {value}"
-    )
+    await bot.send_message(chat_id, f"🃏 {tag} відкриває характеристику:\n• {title}: {value}")
 
     if len(opened) >= limit:
         await bot.send_message(chat_id, f"✅ {tag} відкрив потрібну кількість характеристик.")
@@ -1610,7 +1933,14 @@ async def cb_settings(call: CallbackQuery):
     s[key] = newv
     g.settings = s
 
-    if key in ("min_players", "max_players", "anonymous_vote", "show_cards_on_elim_default", "penalty_for_silence", "penalty_for_talk_during_vote"):
+    if key in (
+        "min_players",
+        "max_players",
+        "anonymous_vote",
+        "show_cards_on_elim_default",
+        "penalty_for_silence",
+        "penalty_for_talk_during_vote",
+    ):
         await call.message.edit_reply_markup(reply_markup=kb_settings_rules(s))
     else:
         await call.message.edit_reply_markup(reply_markup=kb_settings_timers(s))
@@ -1639,6 +1969,7 @@ async def any_text(message: Message):
 
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

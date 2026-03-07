@@ -62,6 +62,13 @@ SHOP = {
     "revote": 60,
 }
 
+SPEC_NAMES = {
+    "double_vote": "Подвійний голос",
+    "cancel_vote": "Скасування голосу",
+    "shield": "Щит",
+    "revote": "Переголосування",
+}
+
 MAX_ROUNDS = 7
 
 CATASTROPHES = [
@@ -362,14 +369,17 @@ def shop_text(user_id: int) -> str:
     user = get_user(user_id)
     lines = [f"🏪 Магазин\n\n💰 Баланс: {user['money']}\n"]
     for key, price in SHOP.items():
-        lines.append(f"• {key} — {price}💰")
+        lines.append(f"• {SPEC_NAMES.get(key, key)} — {price}💰")
     return "\n".join(lines)
 
 def spec_text(user_id: int) -> str:
     user = get_user(user_id)
     if not user["spec"]:
         return "🧬 Твої Spec:\n\nПоки що порожньо."
-    return "🧬 Твої Spec:\n\n" + "\n".join(f"{i + 1}. {item}" for i, item in enumerate(user["spec"]))
+    return "🧬 Твої Spec:\n\n" + "\n".join(
+        f"{i + 1}. {SPEC_NAMES.get(item, item)}"
+        for i, item in enumerate(user["spec"])
+    )
 
 def build_top_text() -> str:
     users = load_users()
@@ -663,7 +673,7 @@ def kb_profile() -> InlineKeyboardMarkup:
 def kb_shop() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for key, price in SHOP.items():
-        kb.button(text=f"{key} — {price}💰", callback_data=f"shop:buy:{key}")
+        kb.button(text=f"{SPEC_NAMES.get(key, key)} — {price}💰", callback_data=f"shop:buy:{key}")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -673,7 +683,10 @@ def kb_spec(user_id: int) -> InlineKeyboardMarkup:
 
     if user.get("spec"):
         for i, item in enumerate(user["spec"]):
-            kb.button(text=f"Використати {item}", callback_data=f"spec:use:{i}")
+            kb.button(
+                text=f"Використати: {SPEC_NAMES.get(item, item)}",
+                callback_data=f"spec:use:{i}"
+            )
     else:
         kb.button(text="Немає Spec", callback_data="noop")
 
@@ -1594,7 +1607,7 @@ async def cb_shop_buy(call: CallbackQuery):
 
     if call.message:
         await call.message.edit_text(
-            f"✅ Куплено: {spec_name}\n\n" + shop_text(uid),
+            f"✅ Куплено: {SPEC_NAMES.get(spec_name, spec_name)}\n\n" + shop_text(uid),
             reply_markup=kb_shop()
         )
 
@@ -1622,11 +1635,11 @@ async def cb_spec_use(call: CallbackQuery):
 
     if call.message:
         await call.message.edit_text(
-            f"🧬 Використано: {used_item}\n\n" + spec_text(uid),
+            f"🧬 Використано: {SPEC_NAMES.get(used_item, used_item)}\n\n" + spec_text(uid),
             reply_markup=kb_spec(uid)
         )
 
-    await call.answer(f"Використано {used_item} ✅")
+    await call.answer(f"Використано {SPEC_NAMES.get(used_item, used_item)} ✅")
 
 @dp.callback_query(F.data == "lobby:join")
 async def cb_join(call: CallbackQuery):
@@ -1969,7 +1982,6 @@ async def any_text(message: Message):
 
 async def main():
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

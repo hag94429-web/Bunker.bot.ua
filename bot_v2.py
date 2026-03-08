@@ -214,7 +214,7 @@ def get_chat_settings(chat_id: int) -> dict:
     s = all_s.get(str(chat_id), {})
     merged = DEFAULT_SETTINGS.copy()
     merged.update(s)
-    return merge
+    return merged
 
 def set_chat_settings(chat_id: int, new_settings: dict) -> None:
     all_s = _load_all_settings()

@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -46,6 +46,8 @@ DEFAULT_SETTINGS = {
 }
 
 DEFAULT_USER = {
+    "name": "",
+    "username": "",
     "money": 100,
     "xp": 0,
     "level": 1,
@@ -53,6 +55,8 @@ DEFAULT_USER = {
     "games": 0,
     "spec": [],
     "daily_ts": 0,
+    "ref_by": 0,
+    "refs": 0,
 }
 
 SHOP = {
@@ -243,15 +247,7 @@ def get_user(user_id: int) -> dict:
     uid = str(user_id)
 
     if uid not in users:
-        users[uid] = {
-            "money": 100,
-            "xp": 0,
-            "level": 1,
-            "wins": 0,
-            "games": 0,
-            "spec": [],
-            "daily_ts": 0,
-        }
+        users[uid] = DEFAULT_USER.copy()
         save_users(users)
 
     user = users[uid]
@@ -296,6 +292,25 @@ def add_game(user_id: int) -> dict:
     update_user(user_id, user)
     return user
 
+def touch_user_profile(user_id: int, full_name: str = "", username: str = "") -> dict:
+    user = get_user(user_id)
+    if full_name:
+        user["name"] = full_name
+    if username is not None:
+        user["username"] = username
+    update_user(user_id, user)
+    return user
+
+def pretty_user_name(user_data: dict, uid: int) -> str:
+    username = (user_data.get("username") or "").strip()
+    name = (user_data.get("name") or "").strip()
+
+    if username:
+        return f"@{username}"
+    if name:
+        return name
+    return f"Гравець {uid}"
+
 def build_stats_text() -> str:
     users = load_users()
 
@@ -328,6 +343,52 @@ def build_stats_text() -> str:
         f"💰 Монет у системі: {total_money}\n"
         f"⭐ XP у системі: {total_xp}\n"
         f"🧬 Куплених Spec: {total_specs}"
+    )
+
+def build_top_text() -> str:
+    users = load_users()
+
+    if not users:
+        return "🏆 Топ поки порожній."
+
+    rating = []
+    for uid, data in users.items():
+        wins = int(data.get("wins", 0))
+        level = int(data.get("level", calc_level(int(data.get("xp", 0)))))
+        money = int(data.get("money", 0))
+        rating.append((int(uid), data, wins, level, money))
+
+    rating.sort(key=lambda x: (-x[2], -x[3], -x[4]))
+
+    medals = {
+        1: "🥇",
+        2: "🥈",
+        3: "🥉",
+    }
+
+    lines = ["🏆 Топ гравців Bunker\n"]
+
+    for i, (uid, data, wins, level, money) in enumerate(rating[:10], start=1):
+        medal = medals.get(i, f"{i}.")
+        name = pretty_user_name(data, uid)
+        lines.append(
+            f"{medal} {name}\n"
+            f"   🏆 Перемог: {wins}\n"
+            f"   📈 Рівень: {level}\n"
+            f"   💰 Монети: {money}\n"
+        )
+
+    return "\n".join(lines)
+
+def build_ref_text(user_id: int, bot_username: str) -> str:
+    user = get_user(user_id)
+    return (
+        "👥 Реферальна система\n\n"
+        "Запроси друзів та отримуй нагороди!\n\n"
+        f"🔗 Твоє посилання:\nhttps://t.me/{bot_username}?start={user_id}\n\n"
+        "🎁 Нагорода:\n"
+        "+50 монет за кожного друга\n\n"
+        f"👤 Запрошено: {int(user.get('refs', 0))}"
     )
 
 def random_card() -> Dict[str, str]:
@@ -414,27 +475,6 @@ def spec_text(user_id: int) -> str:
         f"{i + 1}. {SPEC_NAMES.get(item, item)}"
         for i, item in enumerate(user["spec"])
     )
-
-def build_top_text() -> str:
-    users = load_users()
-    if not users:
-        return "🏆 Топ поки порожній."
-
-    rating = []
-    for uid, data in users.items():
-        rating.append((
-            int(uid),
-            int(data.get("wins", 0)),
-            int(data.get("level", calc_level(int(data.get("xp", 0))))),
-            int(data.get("money", 0)),
-        ))
-
-    rating.sort(key=lambda x: (-x[1], -x[2], -x[3]))
-
-    lines = ["🏆 Топ гравців\n"]
-    for i, (uid, wins, level, money) in enumerate(rating[:10], start=1):
-        lines.append(f"{i}. ID {uid} — 🏆 {wins} | 📈 {level} | 💰 {money}")
-    return "\n".join(lines)
 
 class Phase(str, Enum):
     LOBBY = "lobby"
@@ -1214,6 +1254,7 @@ async def eliminate(chat_id: int, g: Game, kicked_ids: List[int], reason: str):
 
     await start_round_flow(chat_id, g)
 
+
 async def post_intro(chat_id: int, g: Game):
     await bot.send_message(
         chat_id,
@@ -1224,11 +1265,49 @@ async def post_intro(chat_id: int, g: Game):
         "📩 Картки роздано в ЛС."
     )
 
-@dp.message(Command("start"))
+@dp.message(CommandStart())
 async def cmd_start(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
+    text = message.text or ""
+    parts = text.split(maxsplit=1)
+    ref_code = parts[1].strip() if len(parts) > 1 else ""
+
+    if u and ref_code.isdigit():
+        ref_id = int(ref_code)
+        me = get_user(u.id)
+
+        if ref_id != u.id and int(me.get("ref_by", 0)) == 0:
+            users = load_users()
+
+            if str(ref_id) not in users:
+                users[str(ref_id)] = DEFAULT_USER.copy()
+
+            me["ref_by"] = ref_id
+            users[str(u.id)] = me
+
+            ref_user = users.get(str(ref_id), DEFAULT_USER.copy())
+            ref_user["refs"] = int(ref_user.get("refs", 0)) + 1
+            ref_user["money"] = int(ref_user.get("money", 0)) + 50
+            users[str(ref_id)] = ref_user
+
+            save_users(users)
+
+            try:
+                await bot.send_message(
+                    ref_id,
+                    f"🎉 Новий реферал!\n\n"
+                    f"👤 Користувач: {u.full_name}\n"
+                    f"💰 Нагорода: +50 монет"
+                )
+            except Exception:
+                pass
 
     if message.chat.type == "private":
         await message.answer("✅ Приват активовано. Повернись у групу.")
@@ -1247,6 +1326,7 @@ async def cmd_start(message: Message):
         "• /spec — мої Spec\n"
         "• /daily — щоденний бонус\n"
         "• /top — топ гравців\n"
+        "• /ref — реферальна система\n"
         "• /stats — статистика бота\n"
         "• /next — форс наступного етапу\n"
         "• /openvote — форс відкрити голосування\n"
@@ -1261,6 +1341,10 @@ async def cmd_new(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
 
     if message.chat.type == "private":
         await message.answer("Створи лобі у групі 🙂")
@@ -1280,6 +1364,11 @@ async def cmd_players(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     if message.chat.type == "private":
         await message.answer("Ця команда працює у групі.")
         return
@@ -1290,6 +1379,11 @@ async def cmd_leave(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     if message.chat.type == "private":
         await message.answer("Ця команда працює у групі.")
         return
@@ -1297,7 +1391,6 @@ async def cmd_leave(message: Message):
         await message.answer("Гра вже стартувала — вийти не можна.")
         return
 
-    u = message.from_user
     if not u:
         return
     if u.id not in g.players:
@@ -1314,7 +1407,7 @@ async def cmd_profile(message: Message):
     u = message.from_user
     if not u:
         return
-    get_user(u.id)
+    touch_user_profile(u.id, u.full_name, u.username or "")
     await message.answer(profile_text(u.id, u.full_name), reply_markup=kb_profile())
 
 @dp.message(Command("shop"))
@@ -1322,7 +1415,7 @@ async def cmd_shop(message: Message):
     u = message.from_user
     if not u:
         return
-    get_user(u.id)
+    touch_user_profile(u.id, u.full_name, u.username or "")
     await message.answer(shop_text(u.id), reply_markup=kb_shop())
 
 @dp.message(Command("spec"))
@@ -1330,7 +1423,7 @@ async def cmd_spec(message: Message):
     u = message.from_user
     if not u:
         return
-    get_user(u.id)
+    touch_user_profile(u.id, u.full_name, u.username or "")
     await message.answer(spec_text(u.id), reply_markup=kb_spec(u.id))
 
 @dp.message(Command("daily"))
@@ -1339,6 +1432,7 @@ async def cmd_daily(message: Message):
     if not u:
         return
 
+    touch_user_profile(u.id, u.full_name, u.username or "")
     user = get_user(u.id)
     now_ts = int(time.time())
 
@@ -1360,7 +1454,22 @@ async def cmd_daily(message: Message):
 
 @dp.message(Command("top"))
 async def cmd_top(message: Message):
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
     await message.answer(build_top_text())
+
+@dp.message(Command("ref"))
+async def cmd_ref(message: Message):
+    u = message.from_user
+    if not u:
+        return
+
+    touch_user_profile(u.id, u.full_name, u.username or "")
+    me = await bot.get_me()
+    bot_username = me.username or "your_bot"
+
+    await message.answer(build_ref_text(u.id, bot_username))
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
@@ -1377,6 +1486,11 @@ async def cmd_settings(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    uid = message.from_user.id if message.from_user else None
+    if uid:
+        touch_user_profile(uid, message.from_user.full_name, message.from_user.username or "")
+
     if message.chat.type == "private":
         await message.answer("⚙️ Налаштування відкриваються командою /settings у групі.")
         return
@@ -1384,7 +1498,6 @@ async def cmd_settings(message: Message):
         await message.answer("⛔ Налаштування можна змінювати тільки коли гри немає.")
         return
 
-    uid = message.from_user.id if message.from_user else None
     if uid is None:
         return
     if not await is_admin_or_owner(message.chat.id, uid):
@@ -1422,6 +1535,11 @@ async def cmd_end(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     await cancel_timer(g)
     settings = get_chat_settings(message.chat.id)
     GAMES[message.chat.id] = Game()
@@ -1434,6 +1552,11 @@ async def cmd_status(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     if not g.active:
         await message.answer("Немає активної гри.")
         return
@@ -1454,6 +1577,11 @@ async def cmd_startgame(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     if message.chat.type == "private":
         await message.answer("Стартуй гру у групі.")
         return
@@ -1475,7 +1603,6 @@ async def cmd_startgame(message: Message):
         await message.answer(f"Забагато гравців. Максимум {max_p}.")
         return
 
-    u = message.from_user
     if not u:
         return
     g.host_id = u.id
@@ -1529,7 +1656,11 @@ async def cmd_next(message: Message):
     if blocked_by_pause_for_message(g, message):
         return
 
-    uid = message.from_user.id if message.from_user else None
+    u = message.from_user
+    uid = u.id if u else None
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     if uid is None or not (uid == g.host_id or is_owner(uid)):
         await message.answer("Тільки хост або OWNER може форсити фазу.")
         return
@@ -1572,11 +1703,16 @@ async def cmd_openvote(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    uid = u.id if u else None
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     if not g.active:
         await message.answer("Гра не стартувала.")
         return
 
-    uid = message.from_user.id if message.from_user else None
     if uid is None or not (uid == g.host_id or is_owner(uid)):
         await message.answer("Відкрити голосування може тільки хост або OWNER.")
         return
@@ -1589,11 +1725,16 @@ async def cmd_closevote(message: Message):
     g = get_game(message.chat.id)
     if blocked_by_pause_for_message(g, message):
         return
+
+    u = message.from_user
+    uid = u.id if u else None
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     if not g.active:
         await message.answer("Гра не стартувала.")
         return
 
-    uid = message.from_user.id if message.from_user else None
     if uid is None or not (uid == g.host_id or is_owner(uid)):
         await message.answer("Закривати голосування може тільки хост або OWNER.")
         return
@@ -1611,7 +1752,7 @@ async def cb_noop(call: CallbackQuery):
 @dp.callback_query(F.data == "eco:shop")
 async def cb_eco_shop(call: CallbackQuery):
     uid = call.from_user.id
-    get_user(uid)
+    touch_user_profile(uid, call.from_user.full_name, call.from_user.username or "")
     if call.message:
         await call.message.edit_text(shop_text(uid), reply_markup=kb_shop())
     await call.answer()
@@ -1619,13 +1760,15 @@ async def cb_eco_shop(call: CallbackQuery):
 @dp.callback_query(F.data == "eco:spec")
 async def cb_eco_spec(call: CallbackQuery):
     uid = call.from_user.id
-    get_user(uid)
+    touch_user_profile(uid, call.from_user.full_name, call.from_user.username or "")
     if call.message:
         await call.message.edit_text(spec_text(uid), reply_markup=kb_spec(uid))
     await call.answer()
 
 @dp.callback_query(F.data == "eco:top")
 async def cb_eco_top(call: CallbackQuery):
+    if call.from_user:
+        touch_user_profile(call.from_user.id, call.from_user.full_name, call.from_user.username or "")
     if call.message:
         await call.message.edit_text(build_top_text())
     await call.answer()
@@ -1633,6 +1776,7 @@ async def cb_eco_top(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("shop:buy:"))
 async def cb_shop_buy(call: CallbackQuery):
     uid = call.from_user.id
+    touch_user_profile(uid, call.from_user.full_name, call.from_user.username or "")
     spec_name = call.data.split(":")[2]
 
     if spec_name not in SHOP:
@@ -1661,6 +1805,8 @@ async def cb_shop_buy(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("spec:use:"))
 async def cb_spec_use(call: CallbackQuery):
     uid = call.from_user.id
+    touch_user_profile(uid, call.from_user.full_name, call.from_user.username or "")
+
     try:
         idx = int(call.data.split(":")[2])
     except Exception:
@@ -1709,6 +1855,8 @@ async def cb_join(call: CallbackQuery):
         return
 
     u = call.from_user
+    touch_user_profile(u.id, u.full_name, u.username or "")
+
     if u.id in g.players:
         await call.answer("Ти вже в лобі.", show_alert=False)
         return
@@ -1719,7 +1867,6 @@ async def cb_join(call: CallbackQuery):
         return
 
     g.players[u.id] = Player(user_id=u.id, name=u.full_name, username=(u.username or ""))
-    get_user(u.id)
     await call.answer("✅ Додано", show_alert=False)
     await update_lobby(call.message.chat.id, g)
 
@@ -1750,6 +1897,8 @@ async def cb_reveal_pick(call: CallbackQuery):
         return
 
     uid = call.from_user.id
+    touch_user_profile(uid, call.from_user.full_name, call.from_user.username or "")
+
     if uid not in g.players or not g.players[uid].alive:
         await call.answer("Ти не у грі.", show_alert=True)
         return
@@ -1829,6 +1978,8 @@ async def cb_vote(call: CallbackQuery):
         return
 
     voter_id = call.from_user.id
+    touch_user_profile(voter_id, call.from_user.full_name, call.from_user.username or "")
+
     if voter_id not in g.players or not g.players[voter_id].alive:
         await call.answer("Голосують лише живі гравці.", show_alert=True)
         return
@@ -1875,6 +2026,8 @@ async def cb_elimreveal(call: CallbackQuery):
         return
 
     uid = call.from_user.id
+    touch_user_profile(uid, call.from_user.full_name, call.from_user.username or "")
+
     if not await is_admin_or_owner(chat_id, uid):
         await call.answer("⛔ Тільки OWNER або адмін чату", show_alert=True)
         return
@@ -1903,6 +2056,8 @@ async def cb_settings(call: CallbackQuery):
         return
 
     user_id = call.from_user.id
+    touch_user_profile(user_id, call.from_user.full_name, call.from_user.username or "")
+
     if user_id not in SETTINGS_SESSIONS:
         await call.answer("Відкрий /settings у групі ще раз.", show_alert=True)
         return
@@ -2013,10 +2168,13 @@ async def any_text(message: Message):
     if not g.active:
         return
 
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+
     if g.vote_open and message.chat.type != "private":
         txt = (message.text or "").strip()
         if not txt.startswith("/"):
-            u = message.from_user
             if u and u.id in g.players and g.players[u.id].alive:
                 g.silent_offenders.add(u.id)
                 g.talk_vote_penalties.add(u.id)

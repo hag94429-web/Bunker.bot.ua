@@ -61,14 +61,24 @@ SHOP = {
     "cancel_vote": 40,
     "shield": 70,
     "revote": 60,
+    "extra_reveal": 45,
+    "anti_penalty": 55,
+    "spec_block": 80,
+    "scan": 65,
 }
+
 
 SPEC_NAMES = {
     "double_vote": "Подвійний голос",
     "cancel_vote": "Скасування голосу",
     "shield": "Щит",
     "revote": "Переголосування",
+    "extra_reveal": "Додаткове відкриття",
+    "anti_penalty": "Захист від штрафу",
+    "spec_block": "Саботаж",
+    "scan": "Сканер",
 }
+
 
 MAX_ROUNDS = 7
 

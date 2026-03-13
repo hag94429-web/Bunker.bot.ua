@@ -33,14 +33,11 @@ DEFAULT_SETTINGS = {
     "t_accuse": 25,
     "t_justify": 30,
     "t_exile_pause": 5,
-
     "anonymous_vote": True,
     "show_cards_on_elim_default": False,
-
     "min_players": 6,
     "max_players": 15,
     "slots_mode": "half_floor",
-
     "penalty_for_silence": True,
     "penalty_for_talk_during_vote": True,
 }
@@ -117,12 +114,12 @@ CARD_KEYS_ORDER = [
     ("Професія", "profession"),
     ("Стать", "sex"),
     ("Вік", "age"),
-    ("Телосложення", "body"),
+    ("Статура", "body"),
     ("Риса характеру", "trait"),
     ("Здоров'я", "health"),
     ("Хобі", "hobby"),
     ("Фобія", "phobia"),
-    ("Крупний інвентар", "big_inv"),
+    ("Великий інвентар", "big_inv"),
     ("Рюкзак", "bag"),
     ("Додаткове", "extra"),
     ("Спецздібність", "spec"),
@@ -360,12 +357,7 @@ def build_top_text() -> str:
 
     rating.sort(key=lambda x: (-x[2], -x[3], -x[4]))
 
-    medals = {
-        1: "🥇",
-        2: "🥈",
-        3: "🥉",
-    }
-
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
     lines = ["🏆 Топ гравців Bunker\n"]
 
     for i, (uid, data, wins, level, money) in enumerate(rating[:10], start=1):
@@ -380,6 +372,38 @@ def build_top_text() -> str:
 
     return "\n".join(lines)
 
+def build_toprefs_text() -> str:
+    users = load_users()
+
+    if not users:
+        return "👥 Топ рефералів поки порожній."
+
+    rating = []
+    for uid, data in users.items():
+        refs = int(data.get("refs", 0))
+        rating.append((int(uid), data, refs))
+
+    rating.sort(key=lambda x: (-x[2], x[0]))
+
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    lines = ["👥 Топ рефералів\n"]
+
+    added = 0
+    for uid, data, refs in rating:
+        if refs <= 0:
+            continue
+        medal = medals.get(added + 1, f"{added + 1}.")
+        name = pretty_user_name(data, uid)
+        lines.append(f"{medal} {name} — {refs}")
+        added += 1
+        if added >= 10:
+            break
+
+    if added == 0:
+        return "👥 Топ рефералів поки порожній."
+
+    return "\n".join(lines)
+
 def build_ref_text(user_id: int, bot_username: str) -> str:
     user = get_user(user_id)
     return (
@@ -387,8 +411,29 @@ def build_ref_text(user_id: int, bot_username: str) -> str:
         "Запроси друзів та отримуй нагороди!\n\n"
         f"🔗 Твоє посилання:\nhttps://t.me/{bot_username}?start={user_id}\n\n"
         "🎁 Нагорода:\n"
-        "+50 монет за кожного друга\n\n"
+        "+50 монет за кожного друга\n"
+        "+25 монет новому гравцю\n\n"
         f"👤 Запрошено: {int(user.get('refs', 0))}"
+    )
+
+def help_text() -> str:
+    return (
+        "🎮 Гра «Бункер»\n\n"
+        "Основні команди:\n\n"
+        "/new — створити лобі\n"
+        "/players — список гравців\n"
+        "/leave — вийти з лобі\n"
+        "/startgame — почати гру\n"
+        "/status — стан гри\n\n"
+        "👤 Профіль:\n\n"
+        "/profile — профіль гравця\n"
+        "/shop — магазин\n"
+        "/spec — здібності\n"
+        "/daily — щоденний бонус\n\n"
+        "🏆 Рейтинг:\n\n"
+        "/top — топ гравців\n"
+        "/toprefs — топ рефералів\n"
+        "/ref — запросити друзів"
     )
 
 def random_card() -> Dict[str, str]:
@@ -457,7 +502,8 @@ def profile_text(user_id: int, tg_name: str) -> str:
         f"📈 Рівень: {level}\n"
         f"🏆 Перемог: {user['wins']}\n"
         f"🎮 Ігор: {user['games']}\n"
-        f"🧬 Spec: {len(user['spec'])}"
+        f"🧬 Spec: {len(user['spec'])}\n"
+        f"👥 Рефералів: {int(user.get('refs', 0))}"
     )
 
 def shop_text(user_id: int) -> str:
@@ -474,6 +520,24 @@ def spec_text(user_id: int) -> str:
     return "🧬 Твої Spec:\n\n" + "\n".join(
         f"{i + 1}. {SPEC_NAMES.get(item, item)}"
         for i, item in enumerate(user["spec"])
+    )
+
+def full_private_card_text(card: dict) -> str:
+    return (
+        "🃏 Твоя картка персонажа\n\n"
+        f"Професія: {card['profession']}\n"
+        f"Стать: {card['sex']}\n"
+        f"Вік: {card['age']}\n"
+        f"Статура: {card['body']}\n"
+        f"Риса характеру: {card['trait']}\n"
+        f"Здоров'я: {card['health']}\n"
+        f"Хобі: {card['hobby']}\n"
+        f"Фобія: {card['phobia']}\n"
+        f"Великий інвентар: {card['big_inv']}\n"
+        f"Рюкзак: {card['bag']}\n"
+        f"Додаткове: {card['extra']}\n"
+        f"Спецздібність: {card['spec']}\n\n"
+        "⬇️ Нижче кнопки для відкриття характеристик у грі"
     )
 
 class Phase(str, Enum):
@@ -501,46 +565,34 @@ class Player:
 class Game:
     active: bool = False
     paused: bool = False
-
     phase: Phase = Phase.LOBBY
     round_no: int = 0
     clockwise: bool = True
     order: List[int] = field(default_factory=list)
-
     host_id: Optional[int] = None
-
     catastrophe: str = ""
     bunker_desc: str = ""
     slots: int = 0
     reveal_plan: List[int] = field(default_factory=list)
-
     lobby_open: bool = True
     lobby_message_id: Optional[int] = None
-
     timer_task: Optional[asyncio.Task] = None
     presentation_run_id: int = 0
-
     vote_open: bool = False
     votes: Dict[int, int] = field(default_factory=dict)
     silent_offenders: Set[int] = field(default_factory=set)
-
     cards: Dict[int, Dict[str, str]] = field(default_factory=dict)
     revealed_total: Dict[int, int] = field(default_factory=dict)
     revealed_by_round: Dict[int, Dict[int, Set[str]]] = field(default_factory=dict)
-
     last_elim_id: Optional[int] = None
-
     players: Dict[int, Player] = field(default_factory=dict)
     settings: dict = field(default_factory=dict)
-
     vote_kind: str = "main"
     vote_targets: List[int] = field(default_factory=list)
     justify_candidates: List[int] = field(default_factory=list)
-
     current_speaker_index: int = 0
     current_speaker_id: Optional[int] = None
     round_reveal_limit: int = 0
-
     penalties_next_round_reveal_minus: Dict[int, int] = field(default_factory=dict)
     penalty_round_applied: Set[int] = field(default_factory=set)
     talk_vote_penalties: Set[int] = field(default_factory=set)
@@ -614,8 +666,7 @@ def blocked_by_pause_for_message(g: Game, message: Message) -> bool:
 def blocked_by_pause_for_callback(g: Game, call: CallbackQuery) -> bool:
     if not g.paused:
         return False
-    uid = call.from_user.id
-    return not is_owner(uid)
+    return not is_owner(call.from_user.id)
 
 async def cancel_timer(g: Game):
     if g.timer_task and not g.timer_task.done():
@@ -635,17 +686,12 @@ def kb_lobby() -> InlineKeyboardMarkup:
 
 def kb_vote(chat_id: int, g: Game, voter_id: Optional[int] = None) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-
-    if g.vote_targets:
-        targets = [pid for pid in g.vote_targets if pid in g.players and g.players[pid].alive]
-    else:
-        targets = g.alive_ids()
+    targets = [pid for pid in (g.vote_targets or g.alive_ids()) if pid in g.players and g.players[pid].alive]
 
     for pid in targets:
         if voter_id is not None and pid == voter_id:
             continue
-        p = g.players[pid]
-        kb.button(text=p.tag(), callback_data=f"vote:{chat_id}:{pid}")
+        kb.button(text=g.players[pid].tag(), callback_data=f"vote:{chat_id}:{pid}")
 
     kb.adjust(1)
     return kb.as_markup()
@@ -662,13 +708,19 @@ def kb_dm_reveal_menu(chat_id: int, user_id: int, g: Game) -> InlineKeyboardMark
         all_prev_opened.update(rnd_map.get(user_id, set()))
 
     for title, key in CARD_KEYS_ORDER:
-        mark = "✅ " if key in opened else ""
+        value = g.cards.get(user_id, {}).get(key, "")
+        is_opened = key in opened
         disabled = (not is_current) or (key in all_prev_opened) or (len(opened) >= limit)
-        text = f"{mark}{title}"
+
+        if is_opened:
+            text = f"✅ {title}: {value}"
+        else:
+            text = title
+
         cb = "noop" if disabled else f"revealpick:{chat_id}:{key}"
         kb.button(text=text, callback_data=cb)
 
-    kb.adjust(2)
+    kb.adjust(1)
     return kb.as_markup()
 
 def kb_reveal_elim(target_id: int) -> InlineKeyboardMarkup:
@@ -688,7 +740,6 @@ def kb_settings_main() -> InlineKeyboardMarkup:
 
 def kb_settings_timers(s: dict) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-
     rows = [
         ("🎙 Хід", "t_turn", 10, 5),
         ("🗳 Голосування", "t_vote", 10, 5),
@@ -720,7 +771,7 @@ def kb_settings_rules(s: dict) -> InlineKeyboardMarkup:
     pt = "Так" if s.get("penalty_for_talk_during_vote", True) else "Ні"
 
     kb.button(text=f"🕶 Анонімність голосу: {av}", callback_data="set:toggle:anonymous_vote")
-    kb.button(text=f"🃏 Картки після вильоту (дефолт): {sc}", callback_data="set:toggle:show_cards_on_elim_default")
+    kb.button(text=f"🃏 Картки після вильоту: {sc}", callback_data="set:toggle:show_cards_on_elim_default")
     kb.button(text=f"🤐 Штраф за пасивність: {ps}", callback_data="set:toggle:penalty_for_silence")
     kb.button(text=f"🔇 Штраф за балачки: {pt}", callback_data="set:toggle:penalty_for_talk_during_vote")
 
@@ -757,10 +808,7 @@ def kb_spec(user_id: int) -> InlineKeyboardMarkup:
 
     if user.get("spec"):
         for i, item in enumerate(user["spec"]):
-            kb.button(
-                text=f"Використати: {SPEC_NAMES.get(item, item)}",
-                callback_data=f"spec:use:{i}"
-            )
+            kb.button(text=f"Використати: {SPEC_NAMES.get(item, item)}", callback_data=f"spec:use:{i}")
     else:
         kb.button(text="Немає Spec", callback_data="noop")
 
@@ -818,9 +866,7 @@ async def deal_cards(chat_id: int, g: Game):
         try:
             await bot.send_message(
                 pid,
-                "🧾 Твоя картка персонажа.\n"
-                "Характеристики відкриваються кнопками.\n"
-                "Під час презентації активний тільки поточний гравець.",
+                full_private_card_text(g.cards[pid]),
                 reply_markup=kb_dm_reveal_menu(chat_id, pid, g)
             )
         except Exception:
@@ -1061,10 +1107,12 @@ async def start_vote_timer(chat_id: int, g: Game):
 
 async def auto_open_vote(chat_id: int, g: Game, kind: str = "main"):
     g.phase = Phase.VOTE if kind == "main" else Phase.REVOTE
-    g.vote_open = True
+    g.vote_open = False
     g.votes.clear()
     g.silent_offenders.clear()
     g.vote_kind = kind
+    g.vote_targets.clear()
+    g.vote_open = True
 
     if kind == "main":
         g.vote_targets = g.alive_ids()
@@ -1121,7 +1169,6 @@ async def auto_justify_phase(chat_id: int, g: Game):
 
 async def close_vote_internal(chat_id: int, g: Game, forced_by_timer: bool):
     g.vote_open = False
-
     alive_ids = g.alive_ids()
     allowed_targets = set(g.vote_targets if g.vote_targets else alive_ids)
 
@@ -1254,7 +1301,6 @@ async def eliminate(chat_id: int, g: Game, kicked_ids: List[int], reason: str):
 
     await start_round_flow(chat_id, g)
 
-
 async def post_intro(chat_id: int, g: Game):
     await bot.send_message(
         chat_id,
@@ -1290,6 +1336,7 @@ async def cmd_start(message: Message):
                 users[str(ref_id)] = DEFAULT_USER.copy()
 
             me["ref_by"] = ref_id
+            me["money"] = int(me.get("money", 0)) + 25
             users[str(u.id)] = me
 
             ref_user = users.get(str(ref_id), DEFAULT_USER.copy())
@@ -1305,6 +1352,15 @@ async def cmd_start(message: Message):
                     f"🎉 Новий реферал!\n\n"
                     f"👤 Користувач: {u.full_name}\n"
                     f"💰 Нагорода: +50 монет"
+                )
+            except Exception:
+                pass
+
+            try:
+                await bot.send_message(
+                    u.id,
+                    "🎉 Ти приєднався за реферальним посиланням!\n\n"
+                    "💰 Бонус: +25 монет"
                 )
             except Exception:
                 pass
@@ -1326,7 +1382,9 @@ async def cmd_start(message: Message):
         "• /spec — мої Spec\n"
         "• /daily — щоденний бонус\n"
         "• /top — топ гравців\n"
+        "• /toprefs — топ рефералів\n"
         "• /ref — реферальна система\n"
+        "• /help — допомога\n"
         "• /stats — статистика бота\n"
         "• /next — форс наступного етапу\n"
         "• /openvote — форс відкрити голосування\n"
@@ -1335,6 +1393,13 @@ async def cmd_start(message: Message):
         "• /pause, /resume — пауза/відновлення (OWNER)\n"
         "• /end — завершити гру"
     )
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+    await message.answer(help_text())
 
 @dp.message(Command("new"))
 async def cmd_new(message: Message):
@@ -1435,7 +1500,6 @@ async def cmd_daily(message: Message):
     touch_user_profile(u.id, u.full_name, u.username or "")
     user = get_user(u.id)
     now_ts = int(time.time())
-
     last_ts = int(user.get("daily_ts", 0))
     cooldown = 60 * 60 * 24
 
@@ -1459,6 +1523,13 @@ async def cmd_top(message: Message):
         touch_user_profile(u.id, u.full_name, u.username or "")
     await message.answer(build_top_text())
 
+@dp.message(Command("toprefs"))
+async def cmd_toprefs(message: Message):
+    u = message.from_user
+    if u:
+        touch_user_profile(u.id, u.full_name, u.username or "")
+    await message.answer(build_toprefs_text())
+
 @dp.message(Command("ref"))
 async def cmd_ref(message: Message):
     u = message.from_user
@@ -1468,17 +1539,14 @@ async def cmd_ref(message: Message):
     touch_user_profile(u.id, u.full_name, u.username or "")
     me = await bot.get_me()
     bot_username = me.username or "your_bot"
-
     await message.answer(build_ref_text(u.id, bot_username))
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     user_id = message.from_user.id if message.from_user else None
-
     if not is_owner(user_id):
         await message.answer("⛔ Тільки для OWNER")
         return
-
     await message.answer(build_stats_text())
 
 @dp.message(Command("settings"))
@@ -1497,7 +1565,6 @@ async def cmd_settings(message: Message):
     if g.active:
         await message.answer("⛔ Налаштування можна змінювати тільки коли гри немає.")
         return
-
     if uid is None:
         return
     if not await is_admin_or_owner(message.chat.id, uid):
@@ -1586,7 +1653,7 @@ async def cmd_startgame(message: Message):
         await message.answer("Стартуй гру у групі.")
         return
     if g.active:
-        await message.answer("Гра вже йде.")
+        await message.answer("❗ Гра вже запущена.")
         return
 
     g.lobby_open = False
@@ -1620,7 +1687,6 @@ async def cmd_startgame(message: Message):
     g.active = True
     g.round_no = 1
     g.clockwise = True
-
     g.catastrophe = random.choice(CATASTROPHES)
     g.bunker_desc = build_bunker_desc()
     g.slots = bunker_slots(len(g.players), s.get("slots_mode", "half_floor"))
@@ -1664,7 +1730,6 @@ async def cmd_next(message: Message):
     if uid is None or not (uid == g.host_id or is_owner(uid)):
         await message.answer("Тільки хост або OWNER може форсити фазу.")
         return
-
     if not g.active:
         await message.answer("Гра не стартувала.")
         return
@@ -1712,7 +1777,6 @@ async def cmd_openvote(message: Message):
     if not g.active:
         await message.answer("Гра не стартувала.")
         return
-
     if uid is None or not (uid == g.host_id or is_owner(uid)):
         await message.answer("Відкрити голосування може тільки хост або OWNER.")
         return
@@ -1734,7 +1798,6 @@ async def cmd_closevote(message: Message):
     if not g.active:
         await message.answer("Гра не стартувала.")
         return
-
     if uid is None or not (uid == g.host_id or is_owner(uid)):
         await message.answer("Закривати голосування може тільки хост або OWNER.")
         return
@@ -1841,15 +1904,12 @@ async def cb_join(call: CallbackQuery):
     if blocked_by_pause_for_callback(g, call):
         await call.answer("Пауза.", show_alert=False)
         return
-
     if call.message.chat.type == "private":
         await call.answer("Гра працює у групі.", show_alert=True)
         return
-
     if g.active:
         await call.answer("Гра вже йде.", show_alert=True)
         return
-
     if not g.lobby_open:
         await call.answer("Реєстрація закрита.", show_alert=True)
         return
@@ -1887,11 +1947,9 @@ async def cb_reveal_pick(call: CallbackQuery):
     if blocked_by_pause_for_callback(g, call):
         await call.answer("Пауза.", show_alert=False)
         return
-
     if not g.active:
         await call.answer("Гри немає.", show_alert=True)
         return
-
     if g.phase != Phase.PRESENTATION:
         await call.answer("Зараз не фаза презентації.", show_alert=True)
         return
@@ -1902,11 +1960,9 @@ async def cb_reveal_pick(call: CallbackQuery):
     if uid not in g.players or not g.players[uid].alive:
         await call.answer("Ти не у грі.", show_alert=True)
         return
-
     if uid != g.current_speaker_id:
         await call.answer("Зараз не твій хід.", show_alert=True)
         return
-
     if key not in g.cards.get(uid, {}):
         await call.answer("Невідома характеристика.", show_alert=True)
         return
@@ -1922,7 +1978,6 @@ async def cb_reveal_pick(call: CallbackQuery):
     if key in all_prev_opened:
         await call.answer("Ця характеристика вже відкривалась раніше.", show_alert=True)
         return
-
     if len(opened) >= limit:
         await call.answer(f"У цьому раунді можна відкрити лише {limit}.", show_alert=True)
         return
@@ -1937,7 +1992,10 @@ async def cb_reveal_pick(call: CallbackQuery):
     await call.answer("✅ Відкрито", show_alert=False)
 
     try:
-        await call.message.edit_reply_markup(reply_markup=kb_dm_reveal_menu(chat_id, uid, g))
+        await call.message.edit_text(
+            full_private_card_text(g.cards[uid]),
+            reply_markup=kb_dm_reveal_menu(chat_id, uid, g)
+        )
     except Exception:
         pass
 
@@ -2101,6 +2159,7 @@ async def cb_settings(call: CallbackQuery):
         if len(parts) < 3:
             await call.answer("Помилка toggle", show_alert=True)
             return
+
         key = parts[2]
         if key in (
             "anonymous_vote",
@@ -2112,6 +2171,7 @@ async def cb_settings(call: CallbackQuery):
         else:
             await call.answer("Невідомий параметр", show_alert=True)
             return
+
         g.settings = s
         await call.message.edit_reply_markup(reply_markup=kb_settings_rules(s))
         await call.answer("✅")
